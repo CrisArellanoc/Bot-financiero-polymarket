@@ -1,0 +1,185 @@
+{
+  "status": "research_models_trained_no_operational_model",
+  "requirements_source": "Aprendizaje_automatico_series_financieras_cap7 (1).ipynb",
+  "source_sha256": "76A39A7EC13394F6FFB8A57BD8AB606E544DB3E7E5FAE0E1B7C1F9DB646DE03C",
+  "scope_decision": "2026-11-17: user removed DL protocol and +20% requirement; professor authorization confirmed",
+  "market": "polymarket_btc_updown_5m",
+  "prediction_time": "interval_start",
+  "horizon_seconds": 300,
+  "timezone": "UTC",
+  "num_lags": 500,
+  "split": {
+    "train": 0.8,
+    "test": 0.2,
+    "by": "target_time",
+    "shuffle": false,
+    "after_windowing": true
+  },
+  "features": [
+    "lagged_price_differences"
+  ],
+  "notebook_transform": "diff(close); absolute price differences, not percentage returns",
+  "fit_transforms_on": "train_only",
+  "models": [
+    {
+      "name": "dummy_mean",
+      "estimator": "sklearn.dummy.DummyRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "strategy": "mean"
+      },
+      "preprocessing": []
+    },
+    {
+      "name": "linear",
+      "estimator": "sklearn.linear_model.LinearRegression",
+      "num_lags": 500,
+      "parameters": {},
+      "preprocessing": []
+    },
+    {
+      "name": "svr",
+      "estimator": "sklearn.svm.SVR",
+      "num_lags": 50,
+      "parameters": {
+        "kernel": "rbf",
+        "C": 1,
+        "gamma": 0.04,
+        "epsilon": 0.01
+      },
+      "preprocessing": [
+        "StandardScaler"
+      ]
+    },
+    {
+      "name": "sgd",
+      "estimator": "sklearn.linear_model.SGDRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "max_iter": 50,
+        "tol": 0.001
+      },
+      "preprocessing": [
+        "StandardScaler"
+      ]
+    },
+    {
+      "name": "knn",
+      "estimator": "sklearn.neighbors.KNeighborsRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "n_neighbors": 10
+      },
+      "preprocessing": []
+    },
+    {
+      "name": "decision_tree",
+      "estimator": "sklearn.tree.DecisionTreeRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "random_state": 123
+      },
+      "preprocessing": []
+    },
+    {
+      "name": "random_forest",
+      "estimator": "sklearn.ensemble.RandomForestRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "max_depth": 20,
+        "random_state": 123
+      },
+      "preprocessing": []
+    },
+    {
+      "name": "adaboost",
+      "estimator": "sklearn.ensemble.AdaBoostRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "random_state": 123
+      },
+      "preprocessing": []
+    },
+    {
+      "name": "xgboost",
+      "estimator": "xgboost.XGBRegressor",
+      "num_lags": 500,
+      "parameters": {
+        "random_state": 123,
+        "n_estimators": 16,
+        "max_depth": 12
+      },
+      "preprocessing": []
+    }
+  ],
+  "unspecified_model_parameters": "library defaults; record and freeze installed versions before training",
+  "primary_prediction_metrics": [
+    "directional_accuracy",
+    "rmse",
+    "directional_bias",
+    "pearson_correlation"
+  ],
+  "additional_metrics_described_in_notebook": [
+    "mae",
+    "mse",
+    "net_return",
+    "profit_factor",
+    "average_win",
+    "average_loss",
+    "max_drawdown",
+    "sharpe"
+  ],
+  "target_definition": "finalPrice - priceToBeat; audited against resolved Up/Down, historical timing still proxy",
+  "binary_outcome_evaluation": "compare forecast direction with official Up/Down; define equality separately from notebook sign accuracy",
+  "evaluation_controls": {
+    "test_locked_until_final_evaluation": true,
+    "model_selection": "chronological folds within the training 80%; no model selection using final test",
+    "compare_models_on_common_target_dates": true,
+    "late_or_missing_start_data": "abstain_and_log",
+    "undefined_metrics": "null_with_reason",
+    "origin": "engineering controls for temporal integrity; not fixed parameters from notebook"
+  },
+  "deep_learning_required": false,
+  "required_gpu": null,
+  "profitability_target": null,
+  "success_definition": "net profitability after costs and risk, supported by out-of-sample prediction quality; no fixed +20% target",
+  "execution": "paper_components_only_not_yet_integrated",
+  "llm_api": "pending_user_details",
+  "autonomy": {
+    "target": "live_data -> prediction_at_start -> deterministic_checks -> automatic_paper_buy -> resolution -> evaluation -> candidate_retraining",
+    "real_money_enabled": false,
+    "real_money_limits": "pending_user",
+    "data_access": "public_polymarket_only; user has no Chainlink TWAP access yet",
+    "probability_calibration_required_for_expected_value": true,
+    "active_model_required": true,
+    "retraining_requested": true,
+    "retraining_implemented": false,
+    "retraining_trigger": "resolved_labeled_batch_and_minimum_time; thresholds_pending_data_audit",
+    "promotion": "future independent temporal evaluation, calibrated probability and net Paper performance; keep current model on failure",
+    "test_integrity": "initial test remains sealed until final evaluation; online model updates require fresh forward evaluation"
+  },
+  "optimization": {
+    "authorized_by_user": true,
+    "trials_run": 60,
+    "temporal_folds": 3,
+    "best_research_model": {
+      "name": "xgb_d2_lag50_aug",
+      "estimator": "xgboost.XGBRegressor",
+      "parameters": {
+        "n_estimators": 100,
+        "max_depth": 2,
+        "learning_rate": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "random_state": 123,
+        "n_jobs": 2
+      },
+      "num_lags": 50,
+      "augmented": true,
+      "preprocessing": []
+    },
+    "promotion_allowed": false,
+    "reason": "no stable lift in all folds; historical availability proxy; no forward Paper evidence"
+  },
+  "active_model": null
+}
