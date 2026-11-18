@@ -15,6 +15,40 @@ El protocolo DL y la meta de +20% fueron retirados por el usuario. El notebook s
 
 ## Documentación
 
+### Análisis visual en Jupyter / VS Code (entrada principal)
+
+Abre `Analisis_modelos_BTC.ipynb`. Incluye las seis gráficas, tablas, comparación de modelos y conclusiones dentro del archivo, con salidas ya guardadas. No necesitas ejecutar el notebook para leer los resultados actuales. Si el editor pide confiar en el archivo, revisa su origen y márcalo como confiable para visualizar las salidas HTML/SVG locales.
+
+Para actualizarlo, selecciona el kernel `.venv` y ejecuta las celdas en orden. Si no aparece el entorno en VS Code/Jupyter, instala el soporte del kernel:
+
+```powershell
+.venv/Scripts/python.exe -m pip install ipykernel
+```
+
+El notebook contiene las funciones de visualización y usa los datos/resultados locales existentes. Ajusta `PROYECTO` si cambias la ubicación. La última celda permite repetir el entrenamiento con `REENTRENAR = True`; está desactivada por defecto y conserva el test final reservado. El script `.py` queda como alternativa para terminal, sin necesidad de ejecutarlo para visualizar el notebook.
+
+### Ver todo el análisis con un solo script
+
+Desde esta carpeta ejecuta:
+
+```powershell
+python analisis_modelos.py
+```
+
+Genera `data/analisis/informe_modelos.html` y lo abre en el navegador. Contiene las gráficas de acierto y RMSE de los nueve modelos, la clasificación de las 60 configuraciones, estabilidad por periodo, acierto móvil, predicciones frente al resultado, errores y matriz Down/Up. El informe incluye sus conclusiones y límites; es el punto de consulta principal del análisis. Los modelos originales y los optimizados se muestran por separado porque sus periodos de validación difieren.
+
+El modo de consulta usa solamente la biblioteca estándar de Python y los resultados locales existentes. El HTML incluye todas las gráficas y funciona sin conexión. Para generar sin abrir el navegador: `python analisis_modelos.py --sin-abrir`. Si los datos están en otra ubicación, consulta `python analisis_modelos.py --help`.
+
+Para repetir desde los datos auditados el entrenamiento y la optimización, conservando el test final reservado:
+
+```powershell
+.venv/Scripts/python.exe analisis_modelos.py --reentrenar
+```
+
+Este modo reutiliza los motores `training.py` y `optimize.py`; sus resultados quedan agrupados bajo `models/analisis/<ejecución>/`, excluidos de Git. Los motores se conservan para evitar duplicar código. La consulta normal no reentrena ni crea carpetas de experimentos nuevas; solo actualiza el HTML. Los informes previos se mantienen como evidencia histórica.
+
+Análisis adicional del candidato: intervalo descriptivo bootstrap de la mejora −0.88 a +6.18 puntos porcentuales. Incluye cero, depende del supuesto de disponibilidad histórica y no corrige selección de 60 modelos. Sigue siendo candidato de investigación.
+
 - [Resultados, evidencia y límites de esta etapa](docs/RESULTADOS_ETAPA_2.md)
 - [Diseño inicial del notebook](docs/INICIO.md)
 - [Autonomía y reentrenamiento: diseño y pendientes](docs/AUTONOMIA.md)
