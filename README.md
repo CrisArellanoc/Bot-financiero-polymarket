@@ -2,6 +2,46 @@
 
 Proyecto de predicción BTC Up/Down de cinco minutos, una predicción al inicio de cada intervalo, con objetivo de operación autónoma. La primera etapa operativa será simulada (Paper).
 
+## Monitor en vivo y simulación
+
+Desde la raíz del repositorio, con Python 3.12 y las dependencias de `requirements-lock.txt` en el entorno activo, ejecuta:
+
+```powershell
+python live_paper.py
+```
+
+Abre [el monitor local](http://127.0.0.1:8765). Déjalo corriendo para acumular intervalos y detén el proceso con Ctrl+C. Guarda cotizaciones, mensajes, pronósticos, etiquetas, modelos y cartera en `data/live_paper.sqlite`. Al reiniciar vuelve a la misma cartera. El selector permite explorar un intervalo anterior y desplegar los datos de cada mensaje. El notebook sigue siendo la entrada para el análisis histórico.
+
+### Supervisor local con Ollama
+
+Con Ollama abierto, el mismo comando inicia el supervisor con `qwen3.5:4b`. El modelo revisa los mensajes del agente, clasifica su estado y selecciona los hechos que destaca en la sección **Supervisor de IA local**. Cada importe, dirección y motivo visible procede del evento registrado. Puedes contrastar el informe con los mensajes debajo de la gráfica.
+
+La inferencia utiliza exclusivamente `127.0.0.1:11434` y pesos instalados en el equipo. El proceso descarta modelos remotos, bloquea redirecciones y prescinde de claves, descargas automáticas y APIs de IA de pago. Polymarket sigue usando Internet para proporcionar datos públicos. Si Ollama está apagado, el panel muestra el error y vuelve a intentar tras 30 segundos. La recopilación y el control de riesgo se ejecutan independientemente. El supervisor agrupa los eventos recientes de cada intervalo y atiende primero los más nuevos tras una pausa. Los informes terminados se guardan en disco. [API local de Ollama](https://docs.ollama.com/api/chat)
+
+Para elegir otro modelo de texto ya instalado, comprueba su nombre con `ollama list` y ejecuta `python live_paper.py --modelo-local NOMBRE`.
+
+### Señal, entrenamiento y compras
+
+El agente consulta por REST el libro Up del **próximo** mercado cada 4–10 segundos. En la apertura congela las últimas lecturas recibidas antes del corte y calcula precio medio, spread, desequilibrio de tamaños, cambio del precio medio y su volatilidad. Requiere dos observaciones separadas por al menos cinco segundos y una cotización final de hasta 24 segundos. Una apertura perdida queda registrada como abstención. El resultado se confirma después por Gamma contrastando pago binario, estado final, precio de referencia y precio final.
+
+Durante la recopilación inicial, el pronóstico de referencia es el punto medio del libro Up. Al llegar a **288 pronósticos con etiqueta oficial** se ajusta un perceptrón multicapa (MLP) con ocho neuronas ocultas. Cada 48 etiquetas nuevas vuelve a ajustar con hasta 2,016 ejemplos prospectivos. Entrenamiento, calibración sigmoidal y validación ocupan el 55%, 20% y 25% en orden temporal. Se purgan etiquetas que aún no eran públicas en el corte siguiente. Los 303 ejemplos históricos reservados pertenecen al experimento anterior.
+
+Para habilitar **compras experimentales simuladas**, el último MLP debe superar al punto medio del libro en acierto y en Brier (menor es mejor) en cada mitad de la validación. Una versión con más de siete días deja de ser elegible. El agente elige Up o Down por probabilidad calibrada y pide el libro ejecutable de ese lado. La cartera verifica las reglas del mercado, la antigüedad de la cotización, el mínimo de orden, la profundidad, el spread, las comisiones y la ventaja esperada. Los costos se calculan por nivel con la tarifa publicada para ese mercado. Los fills representan la liquidez mostrada en la consulta y pueden diferir de una ejecución real. [Mercados y restricciones](https://docs.polymarket.com/market-data/market-details) · [Comisiones](https://docs.polymarket.com/trading/fees)
+
+La cartera de demostración empieza con 100 USD virtuales. Cada intento es de 20 participaciones, con un costo máximo de 15 USD, exposición de hasta 30 USD y presupuesto diario de pérdida de 35 USD (UTC). Exige un margen neto de 0.03 USD por participación, spread máximo de 0.05 USD, libro de hasta 12 segundos y entrada en los primeros 15 segundos. Son parámetros del experimento. El tablero distingue el origen de cada pronóstico y muestra el acierto del MLP y del libro sobre los mismos mercados resueltos, junto al beneficio o pérdida realizada.
+
+### Relación con los capítulos de Kaabar
+
+| Capítulo | Aplicación en este proyecto |
+| --- | --- |
+| 7 · Modelos clásicos | El notebook compara los nueve regresores históricos y conserva las métricas direccionales y de error. |
+| 8 · Redes para series temporales | El MLP regularizado aprende la dirección a partir de la ventana previa a la apertura. |
+| 9 · Validación y reentrenamiento | Cortes temporales, calibración separada, entrenamiento por lotes de etiquetas maduras y umbral de entrada después de costos. |
+| 10 · Aprendizaje por refuerzo | Se registran acción, abstención y recompensa realizada para estudiar decisiones secuenciales. La política de esta versión usa reglas deterministas. Un agente de RL sigue siendo investigación futura. |
+| 11 · Variables y visualización | El monitor muestra cambios, volatilidad del precio implícito del contrato y mensajes entre el libro, el modelo, el control de riesgo y la cartera. |
+
+El umbral de elegibilidad y los parámetros de simulación son decisiones de diseño de este proyecto. [Índice de O’Reilly](https://www.oreilly.com/library/view/deep-learning-for/9781098148386/) · [Código oficial de Sofien Kaabar](https://github.com/sofienkaabar/deep-learning-for-finance)
+
 ## Estado al 17 de noviembre de 2026
 
 - REST y WebSocket públicos verificados; 26,163 eventos guardados en SQLite.
@@ -84,4 +124,4 @@ Usar archivos/carpetas de captura e historial nuevos. El WebSocket captura un me
 
 `training.py` usa disponibilidad observada por defecto. El flag habilita el supuesto histórico de cierre reportado; `optimize.py` está explícitamente dedicado a esa investigación histórica. Los artefactos se marcan no aptos para operar. Ninguno de esos comandos evalúa el test final ni promueve modelos.
 
-Los datos, modelos, claves y entorno virtual están excluidos de Git. No hay rutas de envío de órdenes reales ni procesos continuos activos. La API del LLM local sigue pendiente del usuario.
+Los datos, modelos, informes del supervisor y entorno virtual se conservan en el equipo y están excluidos de Git.

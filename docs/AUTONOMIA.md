@@ -1,4 +1,4 @@
-> Estado actualizado: ver RESULTADOS_ETAPA_2.md. Ya existen modelos de investigación entrenados; ningún modelo operativo está aprobado. Este documento conserva el diseño y distingue los componentes aún pendientes.
+> Diseño histórico del 17 de noviembre. La integración posterior del monitor, el reentrenamiento y la cartera simulada se documenta en el [README](../README.md#monitor-en-vivo-y-simulación). Los resultados de la investigación inicial figuran en [RESULTADOS_ETAPA_2.md](RESULTADOS_ETAPA_2.md).
 
 # Autonomía, datos públicos y reentrenamiento
 

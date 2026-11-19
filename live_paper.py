@@ -1,0 +1,386 @@
+"""Agente prospectivo BTC 5m. Datos públicos y contabilidad simulada en SQLite."""
+import argparse
+from contextlib import closing, contextmanager
+from decimal import Decimal, ROUND_UP
+from functools import partial
+import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import sqlite3
+from threading import Event, Thread
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlsplit
+
+import live_model as ml
+import local_observer
+from autonomy import Limits, PaperLedger, number
+from market_history import iso, normalize_resolved
+from polymarket_public import CLOB, GAMMA, DataError, get_json, inspect_book, inspect_market
+
+RULE_HASH = "485ceb1dabc4aa12fb42c76184563b7378f01e5de9ded73df049c0d191cd5ad1"
+SOURCE = "https://data.chain.link/streams/btc-usd-twap-60s-streams"
+LIMITS = Limits("15", "30", "35", "0.03", "0.05", 12, 15)
+SHARES = Decimal(20)
+API_ERRORS = (ValueError, KeyError, TypeError, IndexError, HTTPError, URLError, TimeoutError, OSError)
+
+
+def dump(value):
+    return json.dumps(value, allow_nan=False, ensure_ascii=False)
+
+
+def slug(start):
+    return f"btc-updown-5m-{start}"
+
+
+@contextmanager
+def writer_lock(path):
+    """Un proceso por cartera, incluso cuando usan puertos distintos."""
+    with open(str(path) + ".lock", "a+b") as handle:
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise SystemExit("Otro proceso usa esta cartera o su bloqueo no está disponible") from exc
+        yield
+
+
+def market_for(start):
+    event = get_json(GAMMA, "/events/slug/" + slug(start))
+    view = inspect_market(event, slug(start))
+    digest = hashlib.sha256(view["description"].encode()).hexdigest()
+    if digest != RULE_HASH or view["resolution_source"] != SOURCE:
+        raise DataError("Las reglas BTC/TWAP cambiaron y requieren revisión")
+    raw = next(m for m in event["markets"] if m.get("slug") == view["slug"])
+    return event, view, raw
+
+
+def must_be_open(view):
+    if view["active"] is not True or view["closed"] is not False or view["accepting_orders"] is not True:
+        raise DataError("El mercado no acepta órdenes")
+
+
+def orderbook(view, side):
+    token = view["outcome_ids"][side]
+    book = get_json(CLOB, "/book", {"token_id": token})
+    observed = time.time()
+    top = inspect_book(book, token)
+    if top["best_bid"] is None or top["best_ask"] is None or not 0 < top["best_bid"] <= top["best_ask"] < 1:
+        raise DataError("Faltan cotizaciones válidas de ambos lados")
+    timestamp = float(book["timestamp"]) / 1000
+    if not -ml.CLOCK_TOLERANCE <= observed - timestamp <= ml.MAX_INPUT_AGE:
+        raise DataError("Cotización CLOB vencida o futura")
+    return book, top, observed, timestamp
+
+
+def costs(raw, book, limit):
+    """Comisión taker de los niveles ejecutables y mínimos vigentes del mercado."""
+    rate = Decimal(0)
+    if raw.get("feesEnabled") is not False:
+        schedule = raw.get("feeSchedule") or {}
+        if raw.get("feesEnabled") is not True or schedule.get("exponent") != 1 or schedule.get("takerOnly") is not True:
+            raise DataError("Comisión no verificada para este mercado")
+        rate = number(schedule["rate"])
+        if not 0 < rate < 1:
+            raise DataError("Tasa taker inválida")
+    left, gross, fee = SHARES, Decimal(0), Decimal(0)
+    for price, size in sorted((number(v["price"]), number(v["size"])) for v in book["asks"]):
+        if price > limit or left == 0:
+            break
+        qty = min(left, size)
+        left -= qty
+        gross += qty * price
+        fee += qty * rate * price * (1-price)
+    if left:
+        raise DataError("Profundidad insuficiente al precio límite")
+    minimum = number(raw["orderMinSize"])
+    if minimum <= 0 or gross < minimum:
+        raise DataError("Importe inferior al mínimo publicado del mercado")
+    return str(fee.quantize(Decimal(".00001"), rounding=ROUND_UP))
+
+
+class Agent:
+    def __init__(self, path):
+        self.ledger = PaperLedger(path, "100")
+        self.db = self.ledger.db
+        self.db.executescript("""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS ticks(start INTEGER, seen REAL, ts REAL, bid REAL, ask REAL,
+                bid_size REAL, ask_size REAL, PRIMARY KEY(start,seen));
+            CREATE TABLE IF NOT EXISTS forecasts(start INTEGER PRIMARY KEY, x TEXT, seen REAL,
+                p REAL, version TEXT, eligible INTEGER, decision TEXT, winner TEXT, labeled REAL,
+                checked REAL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS models(n INTEGER PRIMARY KEY, ready REAL, weights TEXT, report TEXT);
+            CREATE TABLE IF NOT EXISTS trace(id INTEGER PRIMARY KEY, start INTEGER, at REAL,
+                source TEXT, target TEXT, message TEXT, payload TEXT);
+            CREATE INDEX IF NOT EXISTS trace_by_window ON trace(start,id);
+            CREATE TABLE IF NOT EXISTS heartbeat(id INTEGER PRIMARY KEY CHECK(id=1), at REAL, detail TEXT);
+        """)
+        local_observer.tables(self.db)
+        self.next_view = None
+        self.last_maintenance = 0
+
+    def emit(self, start, source, target, message, **data):
+        self.db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
+                        (start, time.time(), source, target, message, dump(data)))
+
+    def observe(self, start):
+        if self.next_view is None or self.next_view["slug"] != slug(start):
+            _, self.next_view, _ = market_for(start)
+        must_be_open(self.next_view)
+        book, top, seen, ts = orderbook(self.next_view, "Up")
+        if max(seen, ts) > start:
+            return
+        bid, ask = top["best_bid"], top["best_ask"]
+        sizes = [sum(float(t["size"]) for t in book[side] if float(t["price"]) == price)
+                 for side, price in (("bids", bid), ("asks", ask))]
+        with self.db:
+            first = not self.db.execute("SELECT 1 FROM ticks WHERE start=? LIMIT 1", (start,)).fetchone()
+            self.db.execute("INSERT OR IGNORE INTO ticks VALUES(?,?,?,?,?,?,?)",
+                            (start, seen, ts, bid, ask, *sizes))
+            if first:
+                self.emit(start, "CLOB", "Libro", "Primera cotización previa a la apertura",
+                          bid_up=bid, ask_up=ask, recibido=seen)
+
+    def decide(self, start):
+        row = self.db.execute("SELECT decision FROM forecasts WHERE start=?", (start,)).fetchone()
+        if row and row[0] is not None:
+            return
+        if not row:
+            model = self.db.execute("SELECT n,ready,weights,report FROM models WHERE ready<=? ORDER BY n DESC LIMIT 1",
+                                    (start,)).fetchone()
+            with self.db:
+                try:
+                    if time.time()-start > LIMITS.entry_deadline_seconds:
+                        raise ValueError("Apertura perdida")
+                    ticks = self.db.execute("SELECT seen,ts,bid,ask,bid_size,ask_size FROM ticks WHERE start=?", (start,))
+                    x, seen = ml.features(ticks, start)
+                    learned = bool(model and model[2])
+                    prob = ml.probability(json.loads(model[2]), x) if learned else x[0]
+                    version = f"MLP-{model[0]}" if learned else "Libro Up"
+                    eligible = bool(learned and json.loads(model[3])["eligible"] and start-model[1] <= 7*86400)
+                    self.db.execute("INSERT INTO forecasts(start,x,seen,p,version,eligible) VALUES(?,?,?,?,?,?)",
+                                    (start, dump(x), seen, prob, version, eligible))
+                    self.emit(start, "Libro", "Modelo", "Variables congeladas al abrir", **dict(zip(ml.FEATURES, x)), recibido=seen)
+                    self.emit(start, "Modelo", "Riesgo", "Pronóstico de apertura", modelo=version, p_up=prob,
+                              direccion="Up" if prob >= .5 else "Down", habilitado_paper=eligible)
+                except ValueError as exc:
+                    self.db.execute("INSERT INTO forecasts(start,decision) VALUES(?,?)", (start, str(exc)))
+                    self.emit(start, "Libro", "Riesgo", str(exc))
+                    return
+        seen, p, version, eligible = self.db.execute(
+            "SELECT seen,p,version,eligible FROM forecasts WHERE start=?", (start,)).fetchone()
+        existing = self.db.execute("SELECT cost FROM orders WHERE market_id=?", (slug(start),)).fetchone()
+        result = {}
+        if existing:
+            decision = "Compra simulada"
+            result = {"total_cost": existing[0]}
+        elif not eligible or p == .5:
+            decision = "Sin candidato habilitado para simulación" if not eligible else "Señal neutral"
+        else:
+            try:
+                if time.time() - start > LIMITS.entry_deadline_seconds:
+                    raise DataError("Ventana de ejecución vencida")
+                _, view, raw = market_for(start)
+                must_be_open(view)
+                side, prob = ("Up", p) if p >= .5 else ("Down", 1-p)
+                book, top, _, ts = orderbook(view, side)
+                limit = number(prob) - number(LIMITS.minimum_net_edge)
+                with self.db:
+                    self.emit(start, "CLOB", "Riesgo", "Libro ejecutable del resultado elegido",
+                              lado=side, bid=top["best_bid"], ask=top["best_ask"], hora_libro=ts,
+                              precio_limite=str(limit), participaciones=str(SHARES), saldo=str(self.ledger.cash))
+                fee = costs(raw, book, limit)
+                if ts > time.time():
+                    time.sleep(max(0, ts-time.time()))
+                proposal = dict(now=time.time(), start=start, end=start+300, book_time=ts,
+                                inputs_available_at=seen, shares=str(SHARES), p_win=prob, max_price=str(limit),
+                                total_costs_extra=fee, min_order_size=book["min_order_size"], model_version=version,
+                                market_id=slug(start), outcome=side, best_bid=top["best_bid"],
+                                asks=[[v["price"], v["size"]] for v in book["asks"]],
+                                model_approved=True, costs_verified=True, rules_verified=True, market_open=True)
+                result = self.ledger.buy(proposal, LIMITS)
+                decision = result.get("reason", "Compra simulada")
+            except API_ERRORS as exc:
+                decision = str(exc)
+        with self.db:
+            self.db.execute("UPDATE forecasts SET decision=? WHERE start=?", (decision, start))
+            self.emit(start, "Riesgo", "Cartera", decision, **result)
+
+    def resolve(self, now):
+        # Reintentos rotativos para que un mercado atrasado no bloquee los siguientes.
+        pending = self.db.execute("""SELECT start FROM forecasts WHERE p IS NOT NULL AND winner IS NULL
+            AND start+300<=? AND checked<=? ORDER BY checked,start LIMIT 3""", (now, now-60)).fetchall()
+        for (start,) in pending:
+            with self.db:
+                self.db.execute("UPDATE forecasts SET checked=? WHERE start=?", (now, start))
+            try:
+                event, _, _ = market_for(start)
+                seen = time.time()
+                record = normalize_resolved(event, iso(seen))
+            except API_ERRORS as exc:
+                if str(exc) != "Mercado sin resolución final confirmada por Gamma":
+                    with self.db:
+                        self.emit(start, "Gamma", "Resolución", str(exc))
+                continue
+            winner = record["outcome"]
+            order = self.db.execute("SELECT settled_at FROM orders WHERE market_id=?", (slug(start),)).fetchone()
+            if order and order[0] is None:
+                self.ledger.settle(slug(start), winner, seen, time.time(), final_verified=True)
+            with self.db:
+                self.db.execute("UPDATE forecasts SET winner=?, labeled=? WHERE start=?", (winner, seen, start))
+                self.emit(start, "Gamma", "Entrenamiento", "Resultado oficial verificado", ganador=winner)
+                if order:
+                    pnl = self.db.execute("SELECT pnl FROM orders WHERE market_id=?", (slug(start),)).fetchone()[0]
+                    self.emit(start, "Resolución", "Cartera", "Pago simulado contabilizado", pnl_neto=pnl)
+
+    def train(self, start):
+        n = self.db.execute("SELECT count(*) FROM forecasts WHERE labeled IS NOT NULL").fetchone()[0]
+        last = self.db.execute("SELECT coalesce(max(n),0) FROM models").fetchone()[0]
+        if n < ml.MIN_ROWS or n-last < ml.BATCH:
+            return
+        rows = self.db.execute("""SELECT start,x,winner,labeled FROM forecasts WHERE labeled IS NOT NULL
+            ORDER BY start DESC LIMIT ?""", (ml.MAX_ROWS,)).fetchall()
+        model, report = ml.fit_candidate([(t, json.loads(x), int(w == "Up"), seen) for t, x, w, seen in rows])
+        with self.db:
+            self.db.execute("INSERT INTO models VALUES(?,?,?,?)",
+                            (n, time.time(), dump(model) if model else None, dump(report)))
+            self.emit(start, "Entrenamiento", "Modelo", report["reason"], muestra=n, **report)
+
+    def step(self):
+        now = time.time()
+        start = int(now)//300*300
+        self.decide(start)
+        if 45 < now-start < 165 and now-self.last_maintenance >= 20:
+            self.last_maintenance = now
+            self.resolve(now)
+            self.train(start)
+        if time.time() < start+300:
+            self.observe(start+300)
+        return start
+
+def snapshot(path, selected=None):
+    with closing(sqlite3.connect(path, timeout=3)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("BEGIN")
+        rows = lambda sql, args=(): [dict(r) for r in db.execute(sql, args)]
+        windows = [r[0] for r in db.execute("""SELECT start FROM forecasts UNION SELECT start FROM ticks
+            ORDER BY start DESC LIMIT 144""")]
+        current = int(time.time())//300*300
+        focus = selected if selected is not None else current
+        forecast = rows("SELECT start,seen,p,version,eligible,decision,winner,labeled FROM forecasts WHERE start=?", (focus,))
+        ticks = rows("SELECT seen,ts,bid,ask FROM ticks WHERE start=? ORDER BY seen", (focus,))
+        trace = rows("SELECT at,source,target,message,payload FROM trace WHERE start=? ORDER BY id", (focus,))
+        for msg in trace:
+            msg["payload"] = json.loads(msg["payload"])
+        summary = rows("""SELECT count(p) AS predictions,count(winner) AS labeled,
+            avg(CASE WHEN winner IS NOT NULL THEN ((p>=0.5)=(winner='Up')) END) AS accuracy,
+            avg(CASE WHEN winner IS NOT NULL THEN (((json_extract(x,'$[0]')>=0.5)=(winner='Up'))) END) AS baseline
+            FROM forecasts""")[0]
+        summary.update(rows("""SELECT count(*) AS orders,count(pnl) AS settled,
+            coalesce(sum(CAST(pnl AS REAL)),0) AS pnl FROM orders""")[0])
+        summary.update(rows("""SELECT count(*) AS ml_n, avg((p>=0.5)=(winner='Up')) AS ml_accuracy,
+            avg((json_extract(x,'$[0]')>=0.5)=(winner='Up')) AS ml_baseline
+            FROM forecasts WHERE winner IS NOT NULL AND version LIKE 'MLP-%'""")[0])
+        summary["cash"] = float(db.execute("SELECT cash FROM account WHERE id=1").fetchone()[0])
+        models = rows("SELECT n,ready,report FROM models ORDER BY n DESC LIMIT 1")
+        if models:
+            models[0]["report"] = json.loads(models[0]["report"])
+        hb = rows("SELECT at,detail FROM heartbeat")
+        next_tick = rows("SELECT start,seen,bid,ask FROM ticks ORDER BY start DESC,seen DESC LIMIT 1")
+        observer = rows("SELECT model,at,detail FROM observer_status")
+        notes = rows("""SELECT at,model,level,note FROM local_notes WHERE start=? AND revision=?
+            ORDER BY through_id DESC LIMIT 5""", (focus, local_observer.REVISION))
+        return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
+                    observer=next(iter(observer), None), notes=notes,
+                    ticks=ticks, trace=trace, summary=summary, heartbeat=next(iter(hb), None),
+                    model=next(iter(models), None), last_tick=next(iter(next_tick), None),
+                    min_labels=ml.MIN_ROWS, batch=ml.BATCH)
+
+
+class Panel(BaseHTTPRequestHandler):
+    def __init__(self, *args, db_path, **kwargs):
+        self.db_path = db_path
+        super().__init__(*args, **kwargs)
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        url = urlsplit(self.path)
+        if url.path == "/":
+            payload = Path(__file__).with_name("monitor.html").read_bytes()
+            mime = "text/html; charset=utf-8"
+        elif url.path == "/api/state":
+            try:
+                query = parse_qs(url.query).get("start")
+                data = snapshot(self.db_path, int(query[0]) if query else None)
+                payload = dump(data).encode()
+                mime = "application/json; charset=utf-8"
+            except (ValueError, OverflowError):
+                return self.send_error(400)
+        else:
+            return self.send_error(404)
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--db", type=Path, default=Path("data/live_paper.sqlite"))
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--modelo-local", default=local_observer.PREFERRED_MODEL,
+                   help="Nombre de un modelo de texto ya instalado en Ollama")
+    args = p.parse_args()
+    args.db.parent.mkdir(parents=True, exist_ok=True)
+    with writer_lock(args.db):
+        serve(args)
+
+
+def serve(args):
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), partial(Panel, db_path=args.db))
+    agent = Agent(args.db)
+    Thread(target=server.serve_forever, daemon=True).start()
+    stop = Event()
+    Thread(target=local_observer.observe, args=(args.db, args.modelo_local, stop), daemon=True).start()
+    print(f"Monitor Paper en http://127.0.0.1:{server.server_port}  |  Ctrl+C para detener", flush=True)
+    try:
+        while True:
+            detail = "En observación"
+            try:
+                agent.step()
+            except API_ERRORS as exc:
+                detail = f"Lectura pendiente · {exc}"
+            with agent.db:
+                previous = agent.db.execute("SELECT detail FROM heartbeat").fetchone()
+                if previous and detail != previous[0] and detail != "En observación":
+                    agent.emit(int(time.time())//300*300, "Datos", "Monitor", detail)
+                agent.db.execute("INSERT OR REPLACE INTO heartbeat VALUES(1,?,?)", (time.time(), detail))
+            # Despertar al inicio incluso si la consulta anterior termina cerca del corte.
+            remaining = 300 - time.time() % 300
+            time.sleep(min(4 if remaining <= 95 else 10, remaining))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        server.shutdown()
+        server.server_close()
+        agent.ledger.close()
+
+
+if __name__ == "__main__":
+    main()

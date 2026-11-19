@@ -1,5 +1,5 @@
 {
-  "status": "research_models_trained_no_operational_model",
+  "status": "historical_research_and_prospective_paper_runtime",
   "requirements_source": "Aprendizaje_automatico_series_financieras_cap7 (1).ipynb",
   "source_sha256": "76A39A7EC13394F6FFB8A57BD8AB606E544DB3E7E5FAE0E1B7C1F9DB646DE03C",
   "scope_decision": "2026-11-17: user removed DL protocol and +20% requirement; professor authorization confirmed",
@@ -143,8 +143,8 @@
   "required_gpu": null,
   "profitability_target": null,
   "success_definition": "net profitability after costs and risk, supported by out-of-sample prediction quality; no fixed +20% target",
-  "execution": "paper_components_only_not_yet_integrated",
-  "llm_api": "pending_user_details",
+  "execution": "live_paper.py with public REST and simulated ledger",
+  "llm_api": "local Ollama loopback /api/chat; default qwen3.5:4b; read-only observer",
   "autonomy": {
     "target": "live_data -> prediction_at_start -> deterministic_checks -> automatic_paper_buy -> resolution -> evaluation -> candidate_retraining",
     "real_money_enabled": false,
@@ -153,9 +153,9 @@
     "probability_calibration_required_for_expected_value": true,
     "active_model_required": true,
     "retraining_requested": true,
-    "retraining_implemented": false,
-    "retraining_trigger": "resolved_labeled_batch_and_minimum_time; thresholds_pending_data_audit",
-    "promotion": "future independent temporal evaluation, calibrated probability and net Paper performance; keep current model on failure",
+    "retraining_implemented": true,
+    "retraining_trigger": "prospective MLP after 288 matured predictions, then every 48; rolling 2016",
+    "promotion": "latest calibrated candidate eligible for experimental paper only if it beats the opening book on accuracy and Brier in both validation blocks; seven-day expiry",
     "test_integrity": "initial test remains sealed until final evaluation; online model updates require fresh forward evaluation"
   },
   "optimization": {
