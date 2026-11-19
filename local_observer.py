@@ -10,16 +10,13 @@ HOST = "http://127.0.0.1:11434"
 PREFERRED_MODEL = "qwen3.5:4b"
 REVISION = 2
 LEVELS = ("observacion", "atencion")
-FORMAT = {"type": "object", "properties": {
-    "estado": {"type": "string", "enum": list(LEVELS)},
-    "destacados": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "maxItems": 3}},
-    "required": ["estado", "destacados"], "additionalProperties": False}
 INSTRUCTIONS = (
     "Supervisas un simulador BTC. Lee los eventos en orden cronológico. "
-    "Selecciona entre uno y tres índices de los hechos más relevantes para quien supervisa el bot. "
+    "Selecciona el evento principal y, si aporta contexto, un evento secundario. "
     "Prioriza la decisión de compra o abstención y su causa, la resolución oficial o una avería. "
-    "Los índices empiezan en cero. Marca atencion si hay errores, datos vencidos o comportamiento anómalo. "
-    "El calentamiento normal es observacion. Devuelve únicamente estado y destacados."
+    "Usa las referencias exactas E0, E1, etc. Elige ninguno si no hay un segundo evento. "
+    "Marca atencion si hay errores, datos vencidos o comportamiento anómalo. "
+    "El calentamiento normal es observacion. Devuelve estado, principal y secundario."
 )
 
 
@@ -53,7 +50,14 @@ def select_model(requested):
 def explain(model, evidence):
     # Se vuelve a verificar el alias antes de cada inferencia.
     select_model(model)
-    body = {"model": model, "stream": False, "think": False, "format": FORMAT,
+    events = evidence["mensajes"]
+    refs = {f"E{i}": event["hecho"] for i, event in enumerate(events)}
+    schema = {"type": "object", "properties": {
+        "estado": {"type": "string", "enum": list(LEVELS)},
+        "principal": {"type": "string", "enum": list(refs)},
+        "secundario": {"type": "string", "enum": ["ninguno", *refs]}},
+        "required": ["estado", "principal", "secundario"], "additionalProperties": False}
+    body = {"model": model, "stream": False, "think": False, "format": schema,
             "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 90, "num_thread": 3},
             "messages": [{"role": "system", "content": INSTRUCTIONS},
                          {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]}
@@ -63,12 +67,10 @@ def explain(model, evidence):
     note = json.loads(response["message"]["content"])
     if not isinstance(note, dict) or note.get("estado") not in LEVELS:
         raise ValueError("Estado de monitor inválido")
-    indices = note.get("destacados")
-    events = evidence["mensajes"]
-    if (not isinstance(indices, list) or not 1 <= len(indices) <= 3 or
-            any(type(i) is not int or not 0 <= i < len(events) for i in indices)):
+    first, second = note.get("principal"), note.get("secundario")
+    if first not in refs or (second != "ninguno" and second not in refs):
         raise ValueError("Ollama seleccionó evidencia inexistente")
-    return note["estado"], " ".join(events[i]["hecho"] for i in sorted(set(indices)))
+    return note["estado"], " ".join(fact for ref, fact in refs.items() if ref in (first, second))
 
 
 def event_fact(source, target, message, data):
@@ -112,7 +114,7 @@ def next_evidence(db, now):
         WHERE start=? AND id<=? ORDER BY id DESC LIMIT 8""", (start, through)).fetchall()
     forecast = db.execute("SELECT p,version,decision,winner FROM forecasts WHERE start=?", (start,)).fetchone()
     evidence = {"mercado": f"btc-updown-5m-{start}", "modo": "simulación",
-                "mensajes": [{"indice": i, "hecho": event_fact(src, dst, msg, json.loads(data))}
+                "mensajes": [{"ref": f"E{i}", "hecho": event_fact(src, dst, msg, json.loads(data))}
                              for i, (src, dst, msg, data) in enumerate(reversed(messages))]}
     if forecast:
         evidence.update(dict(zip(("p_up", "fuente_pronostico", "decision", "resultado_oficial"), forecast)))

@@ -21,18 +21,19 @@ class LocalObserverTests(unittest.TestCase):
         self.assertEqual(api.call_count, 1)
 
     def test_only_validated_visible_summary_is_kept(self):
-        note = {"estado": "observacion", "destacados": [0]}
+        note = {"estado": "observacion", "principal": "E0", "secundario": "ninguno"}
         evidence = {"mensajes": [{"hecho": "El simulador espera la apertura."}]}
         result = {"done": True, "message": {"content": json.dumps(note), "thinking": "descartar"}}
         with patch.object(observer, "select_model"), patch.object(observer, "ollama", return_value=result) as api:
             self.assertEqual(observer.explain("mi-modelo", evidence), ("observacion", evidence["mensajes"][0]["hecho"]))
             route, body = api.call_args.args
             self.assertEqual(route, "/api/chat")
+            self.assertEqual(body["format"]["properties"]["principal"]["enum"], ["E0"])
             self.assertIs(body["think"], False)
             self.assertNotIn("tools", body)
             result["done_reason"] = "length"
             with self.assertRaises(ValueError):
-                observer.explain("mi-modelo", {})
+                observer.explain("mi-modelo", evidence)
 
     def test_external_redirect_is_rejected(self):
         with self.assertRaises(ValueError):
