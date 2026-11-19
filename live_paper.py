@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import live_model as ml
 import local_observer
+import laya_shadow
 from autonomy import Limits, PaperLedger, number
 from market_history import iso, normalize_resolved
 from polymarket_public import CLOB, GAMMA, DataError, get_json, inspect_book, inspect_market
@@ -106,12 +107,42 @@ def costs(raw, book, limit):
     return str(fee.quantize(Decimal(".00001"), rounding=ROUND_UP))
 
 
+def chart_feed(path, stop):
+    """Sondea el contrato activo en un hilo independiente del corte de apertura."""
+    with closing(sqlite3.connect(path, timeout=10)) as db:
+        cached = None
+        while not stop.is_set():
+            start = int(time.time())//300*300
+            try:
+                if cached is None or cached["slug"] != slug(start):
+                    _, cached, _ = market_for(start)
+                _, top, seen, ts = orderbook(cached, "Up")
+                bid, ask = number(top["best_bid"]), number(top["best_ask"])
+                if ask-bid > number("0.10"):
+                    trade = get_json(CLOB, "/last-trade-price", {"token_id": cached["outcome_ids"]["Up"]})
+                    value = number(trade["price"])
+                    if not trade.get("side") or not 0 < value < 1:
+                        raise DataError("Última operación no disponible")
+                else:
+                    value = (bid+ask)/2
+                seen = time.time()
+                if start <= ts and seen < start+300:
+                    with db:
+                        db.execute("INSERT INTO chart_prices VALUES(?,?,?)", (start,seen,float(value)))
+            except API_ERRORS:
+                pass  # Los huecos de captura se muestran en la gráfica.
+            stop.wait(min(5, 300-time.time()%300))
+
+
 class Agent:
     def __init__(self, path):
         self.ledger = PaperLedger(path, "100")
         self.db = self.ledger.db
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS chart_prices(start INTEGER,seen REAL,price REAL,PRIMARY KEY(start,seen));
+            CREATE TABLE IF NOT EXISTS laya_predictions(start INTEGER PRIMARY KEY,ready REAL,p REAL,detail TEXT);
+            CREATE TABLE IF NOT EXISTS laya_status(id INTEGER PRIMARY KEY,detail TEXT);
             CREATE TABLE IF NOT EXISTS ticks(start INTEGER, seen REAL, ts REAL, bid REAL, ask REAL,
                 bid_size REAL, ask_size REAL, PRIMARY KEY(start,seen));
             CREATE TABLE IF NOT EXISTS forecasts(start INTEGER PRIMARY KEY, x TEXT, seen REAL,
@@ -298,7 +329,18 @@ def snapshot(path, selected=None):
         observer = rows("SELECT model,at,detail FROM observer_status")
         notes = rows("""SELECT at,model,level,note FROM local_notes WHERE start=? AND revision=?
             ORDER BY through_id DESC LIMIT 5""", (focus, local_observer.REVISION))
+        prices = rows("SELECT seen,price FROM chart_prices WHERE start=? ORDER BY seen", (focus,))
+        prediction = rows("SELECT ready,p,detail FROM laya_predictions WHERE start=?", (focus,))
+        comparison = rows("""SELECT count(*) AS n, avg((l.p>=0.5)=(f.winner='Up')) AS laya,
+            avg((json_extract(f.x,'$[0]')>=0.5)=(f.winner='Up')) AS book,
+            avg(CASE WHEN f.version LIKE 'MLP-%' THEN ((f.p>=0.5)=(f.winner='Up')) END) AS mlp,
+            count(CASE WHEN f.version LIKE 'MLP-%' THEN 1 END) AS mlp_n,
+            avg(CASE WHEN f.version LIKE 'MLP-%' THEN ((l.p>=0.5)=(f.winner='Up')) END) AS laya_shared
+            FROM laya_predictions l JOIN forecasts f USING(start) WHERE l.p IS NOT NULL AND f.winner IS NOT NULL""")[0]
+        state = db.execute("SELECT detail FROM laya_status").fetchone()
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
+                    prices=prices,laya=next(iter(prediction),None),comparison=comparison,
+                    laya_status=state[0] if state else "Esperando inicio",
                     observer=next(iter(observer), None), notes=notes,
                     ticks=ticks, trace=trace, summary=summary, heartbeat=next(iter(hb), None),
                     model=next(iter(models), None), last_tick=next(iter(next_tick), None),
@@ -343,7 +385,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--db", type=Path, default=Path("data/live_paper.sqlite"))
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--modelo-local", default=local_observer.PREFERRED_MODEL,
+    p.add_argument("--modelo-local", default=None,
                    help="Nombre de un modelo de texto ya instalado en Ollama")
     args = p.parse_args()
     args.db.parent.mkdir(parents=True, exist_ok=True)
@@ -356,7 +398,12 @@ def serve(args):
     agent = Agent(args.db)
     Thread(target=server.serve_forever, daemon=True).start()
     stop = Event()
-    Thread(target=local_observer.observe, args=(args.db, args.modelo_local, stop), daemon=True).start()
+    if args.modelo_local:
+        Thread(target=local_observer.observe, args=(args.db, args.modelo_local, stop), daemon=True).start()
+    else:
+        local_observer.status(agent.db, "Opcional", "Desactivado en modo ligero")
+    Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
+    Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop), daemon=True).start()
     print(f"Monitor Paper en http://127.0.0.1:{server.server_port}  |  Ctrl+C para detener", flush=True)
     try:
         while True:

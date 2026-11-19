@@ -12,9 +12,22 @@ python live_paper.py
 
 Abre [el monitor local](http://127.0.0.1:8765). Déjalo corriendo para acumular intervalos y detén el proceso con Ctrl+C. Guarda cotizaciones, mensajes, pronósticos, etiquetas, modelos y cartera en `data/live_paper.sqlite`. Al reiniciar vuelve a la misma cartera. El selector permite explorar un intervalo anterior y desplegar los datos de cada mensaje. El notebook sigue siendo la entrada para el análisis histórico.
 
-### Supervisor local con Ollama
+### Laya experimental y gráfica del mercado activo
 
-Con Ollama abierto, el mismo comando inicia el supervisor con `qwen3.5:4b`. El modelo revisa los mensajes del agente, clasifica su estado y selecciona los hechos que destaca en la sección **Supervisor de IA local**. Cada importe, dirección y motivo visible procede del evento registrado. Puedes contrastar el informe con los mensajes debajo de la gráfica.
+El modo ligero carga un único predictor Laya en CPU y limita PyTorch a un hilo de cálculo. Para preparar el entorno por primera vez, desde la raíz:
+
+```powershell
+python -m pip install laya==0.5.0
+python laya_shadow.py
+```
+
+La descarga prepara el checkpoint inglés de Laya en `models/laya-en`. En cada apertura, Laya lee las cinco variables previamente congeladas y responde una pregunta binaria. Su puntuación para Up es experimental y queda fuera de las decisiones de compra. El panel compara acierto con el libro y el MLP usando las resoluciones de los mismos intervalos.
+
+La gráfica usa el contrato Up del intervalo activo y toma muestras del CLOB aproximadamente cada cinco segundos. Muestra el punto medio bid/ask o, si el spread supera 0.10, la última operación. La segunda línea comienza cuando está disponible la predicción y queda fija. Las dos series usan escala 0–100%; el precio spot BTC/USD se mide en otras unidades. Las ventanas antiguas sin muestras conservan sus datos originales. Si faltan pesos o falla la inferencia, el monitor lo indica.
+
+### Supervisor opcional con Ollama
+
+Para activar el supervisor adicional, ejecuta `python live_paper.py --modelo-local qwen3.5:4b` con Ollama abierto. El modelo revisa los mensajes del agente, clasifica su estado y selecciona los hechos que destaca en la sección **Supervisor de IA local**. Cada importe, dirección y motivo visible procede del evento registrado. Puedes contrastar el informe con los mensajes debajo de la gráfica.
 
 La inferencia utiliza exclusivamente `127.0.0.1:11434` y pesos instalados en el equipo. El proceso descarta modelos remotos, bloquea redirecciones y prescinde de claves, descargas automáticas y APIs de IA de pago. Polymarket sigue usando Internet para proporcionar datos públicos. Si Ollama está apagado, el panel muestra el error y vuelve a intentar tras 30 segundos. La recopilación y el control de riesgo se ejecutan independientemente. El supervisor agrupa los eventos recientes de cada intervalo y atiende primero los más nuevos tras una pausa. Los informes terminados se guardan en disco. [API local de Ollama](https://docs.ollama.com/api/chat)
 

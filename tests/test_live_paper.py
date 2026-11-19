@@ -149,6 +149,21 @@ class CircuitTests(unittest.TestCase):
             self.agent.decide(3000)
         self.assertIsNone(live.snapshot(self.path, 3000)["forecast"]["p"])
 
+    def test_shadow_comparison_uses_only_resolved_common_windows(self):
+        self.buy()
+        with self.db:
+            self.db.execute("INSERT INTO chart_prices VALUES(3000,3003,0.48)")
+            self.db.execute("INSERT INTO laya_predictions VALUES(3000,3002,.65,'Disponible')")
+        state = live.snapshot(self.path, 3000)
+        self.assertEqual(state["prices"][0]["price"], .48)
+        self.assertEqual(state["laya"]["p"], .65)
+        self.assertEqual(state["comparison"]["n"], 0)
+        with self.db:
+            self.db.execute("UPDATE forecasts SET winner='Up', labeled=3400 WHERE start=3000")
+        score = live.snapshot(self.path, 3000)["comparison"]
+        self.assertEqual((score["n"], score["laya"], score["book"], score["mlp_n"]), (1,1,0,0))
+        self.assertEqual(self.agent.ledger.cash, 100)
+
     def test_unresolved_does_not_train(self):
         self.buy()
         with (patch("live_paper.market_for", return_value=({}, self.view, self.raw)),

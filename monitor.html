@@ -248,7 +248,7 @@
       <section class="layout">
         <article>
           <div class="bar">
-            <h2>Libro Up antes de abrir</h2>
+            <h2>Mercado BTC 5 min · Up</h2>
             <small id="interval"></small>
           </div>
           <p id="empty" class="muted"></p>
@@ -256,12 +256,13 @@
             id="chart"
             viewBox="0 0 600 175"
             role="img"
-            aria-label="Mejor bid y ask Up por hora de recepción"
+            aria-label="Precio del contrato Up y puntuación experimental de Laya para Up"
           ></svg>
           <div class="legend">
-            <small><i style="background: #6fe2bb"></i>Bid</small
-            ><small><i style="background: #94b9ff"></i>Ask</small><small id="ticks"></small>
+            <small><i style="background: #6fe2bb"></i>Polymarket · Up</small
+            ><small><i style="background: #94b9ff"></i>Laya · Up al abrir</small><small id="ticks"></small>
           </div>
+          <p id="layaSignal" class="muted"></p>
         </article>
         <article class="stack">
           <h2>Decisión del intervalo</h2>
@@ -275,7 +276,7 @@
         <article class="stack">
           <h2>Aprendizaje prospectivo</h2>
           <p id="learning"></p>
-          <small id="comparison"></small>
+          <small id="comparison"></small><p id="shadowMetrics" class="muted"></p>
           <details id="validation">
             <summary>Validación del último candidato</summary>
             <pre id="report"></pre>
@@ -325,50 +326,46 @@
         if (cls) n.className = cls
         return n
       }
-      function chart(rows) {
+      function chart(s) {
+        const rows = s.prices, forecast = s.laya
+        const available = rows.length || forecast?.p != null
         const svg = el("chart")
         svg.replaceChildren()
-        svg.style.display = rows.length ? "block" : "none"
-        set("empty", rows.length ? "" : "Todavía no hay cotizaciones previas a esta apertura.")
-        el("empty").hidden = !!rows.length
-        set("ticks", rows.length + " lecturas")
-        if (!rows.length) return
+        svg.style.display = available ? "block" : "none"
+        set("empty", available ? "" : "Esperando cotizaciones del contrato durante el intervalo.")
+        el("empty").hidden = !!available
+        const last = rows.at(-1)
+        const delayed = last && s.focus === s.current && Date.now()/1000-last.seen > 18
+        set("ticks", last ? (delayed ? "Sin actualización reciente · " : "Última lectura · ") +
+          local(last.seen) + " · " + pct(last.price) : "Sin precio del intervalo")
+        if (!available) return
         function add(kind, attrs, txt) {
           const n = document.createElementNS("http://www.w3.org/2000/svg", kind)
           for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v)
           if (txt != null) n.textContent = txt
           svg.append(n)
         }
-        const lo = Math.max(0, Math.min(...rows.map((r) => r.bid)) - 0.01),
-          hi = Math.min(1, Math.max(...rows.map((r) => r.ask)) + 0.01)
-        const x = (r) =>
-            53 + ((r.seen - rows[0].seen) * 535) / Math.max(1, rows.at(-1).seen - rows[0].seen),
-          y = (v) => 136 - ((v - lo) * 112) / (hi - lo)
-        for (let i = 0; i < 3; i++) {
-          const v = lo + ((hi - lo) * i) / 2
-          add("line", { x1: 53, x2: 588, y1: y(v), y2: y(v), stroke: "#35464f" })
-          add("text", { x: 1, y: y(v) + 4, fill: "#afbec4", "font-size": 14 }, v.toFixed(3))
+        const x = t => 53 + 535 * (t - s.focus) / 300
+        const y = p => 136 - 112 * p
+        for (const p of [0, .5, 1]) {
+          add("line", {x1:53,x2:588,y1:y(p),y2:y(p),stroke:"#35464f"})
+          add("text",{x:1,y:y(p)+4,fill:"#afbec4","font-size":14}, Math.round(100*p)+"%")
         }
-        for (const [key, color] of [
-          ["bid", "#6fe2bb"],
-          ["ask", "#94b9ff"],
-        ]) {
-          add("polyline", {
-            points: rows.map((r) => [x(r), y(r[key])].join(",")).join(" "),
-            fill: "none",
-            stroke: color,
-            "stroke-width": 2,
-          })
-          let last = rows.at(-1)
-          add("circle", { cx: x(last), cy: y(last[key]), r: 3, fill: color })
+        let prev
+        for (const row of rows) {
+          if (prev && row.seen-prev.seen <= 18)
+            add("line",{x1:x(prev.seen),x2:x(row.seen),y1:y(prev.price),y2:y(row.price),stroke:"#6fe2bb","stroke-width":2})
+          add("circle",{cx:x(row.seen),cy:y(row.price),r:2,fill:"#6fe2bb"})
+          prev=row
         }
-        add("text", { x: 53, y: 166, fill: "#afbec4", "font-size": 14 }, local(rows[0].seen))
-        if (rows.length > 1)
-          add(
-            "text",
-            { x: 588, y: 166, fill: "#afbec4", "text-anchor": "end", "font-size": 14 },
-            local(rows.at(-1).seen),
-          )
+        if (forecast?.p != null) {
+          const end=Math.min(s.focus+300,Date.now()/1000)
+          add("line",{x1:x(forecast.ready),x2:x(Math.max(forecast.ready,end)),y1:y(forecast.p),y2:y(forecast.p),
+            stroke:"#94b9ff","stroke-width":2,"stroke-dasharray":"6 3"})
+        }
+        add("text",{x:53,y:166,fill:"#afbec4","font-size":14},local(s.focus))
+        add("text",{x:588,y:166,fill:"#afbec4","text-anchor":"end","font-size":14},local(s.focus+300))
+
       }
       function render(s) {
         const w = el("window"),
@@ -399,7 +396,8 @@
         set("orders", a.orders)
         set("labels", a.labeled + " / " + a.predictions)
         set("interval", local(s.focus, true))
-        chart(s.ticks)
+        chart(s)
+        set("layaSignal", s.laya?.p != null ? "Laya experimental · " + (s.laya.p >= .5 ? "Up" : "Down") + " · puntuación Up " + pct(s.laya.p) : "Laya · " + (s.laya?.detail ?? s.laya_status))
         set(
           "signal",
           f?.p == null
@@ -426,6 +424,10 @@
         )
         el("validation").hidden = !s.model
         set("report", s.model ? JSON.stringify(s.model.report, null, 2) : "")
+        const comp = s.comparison
+        set("shadowMetrics", "Acierto sobre " + comp.n + " intervalos comunes: Laya " + pct(comp.laya) +
+          " / libro " + pct(comp.book) + ". Con MLP disponible (" + comp.mlp_n + "): Laya " +
+          pct(comp.laya_shared) + " / MLP " + pct(comp.mlp) + ".")
         const t = s.last_tick
         set(
           "last",
@@ -501,7 +503,12 @@
       }
       el("window").addEventListener("change", refresh)
       refresh()
-      setInterval(refresh, 3000)
+      let polling = false
+      setInterval(async () => {
+        if (document.hidden || polling) return
+        polling = true
+        try { await refresh() } finally { polling = false }
+      }, 5000)
     </script>
   </body>
 </html>
