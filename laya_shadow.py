@@ -1,4 +1,4 @@
-"""Predictor experimental local. Solo lee entradas congeladas y escribe su evaluación."""
+"""Predictor experimental remoto o local que evalúa las entradas de apertura."""
 import json
 import math
 import sqlite3
@@ -22,28 +22,37 @@ def load_model(directory):
     return laya.load(str(Path(directory).resolve()), device="cpu", backend="eager")
 
 
-def predict(model, values):
-    state = {"document": "Pre-opening Up contract order book. Mid and spread in dollars per share; "
+def make_state(values):
+    return {"document": "Pre-opening Up contract order book. Mid and spread in dollars per share; "
              "imbalance positive means greater bid size; momentum and volatility of mid over the last 90 seconds. "
-             + json.dumps(dict(zip(FEATURES, values, strict=True)))}
-    result = float(model.predict(state, QUESTION)["answers"]["up"]["noul"])
+             + json.dumps(dict(zip(FEATURES, (round(v, 5) for v in values), strict=True)))}
+
+
+def predict(model, values):
+    result = float(model.predict(make_state(values), QUESTION)["answers"]["up"]["noul"])
     if not math.isfinite(result) or not 0 <= result <= 1:
         raise ValueError("Puntuación de Laya fuera de rango")
     return result
 
 
-def run(path, directory, stop):
+def run(path, directory, stop, remote=None):
     with closing(sqlite3.connect(path, timeout=10)) as db:
         def status(detail):
             with db:
                 db.execute("INSERT OR REPLACE INTO laya_status VALUES(1,?)", (detail,))
         try:
-            status("Cargando pesos en CPU")
-            model = load_model(directory)
+            if remote is None:
+                status("Cargando pesos en CPU")
+                model = load_model(directory)
+                infer = lambda values: predict(model, values)
+                source = "Laya local"
+            else:
+                infer = remote.predict
+                source = "Remoto · " + remote.name
         except Exception as exc:
             status(str(exc))
             return
-        status("Listo para la apertura")
+        status(source + " · esperando apertura")
         while not stop.is_set():
             now = time.time()
             start = int(now)//300*300
@@ -53,16 +62,22 @@ def run(path, directory, stop):
                 if row:
                     score = None
                     try:
-                        score = predict(model, json.loads(row[0]))
+                        score = infer(json.loads(row[0]))
                         detail = "Disponible"
                     except Exception as exc:
                         detail = str(exc)
                     ready = time.time()
-                    if ready-start > 15:
-                        score, detail = None, "Inferencia fuera de la ventana de apertura"
+                    if ready >= start+300:
+                        score, detail = None, "Inferencia terminada después del cierre"
                     with db:
                         db.execute("INSERT OR IGNORE INTO laya_predictions VALUES(?,?,?,?)",
                                    (start,ready,score,detail))
+                        db.execute("INSERT OR REPLACE INTO laya_sources VALUES(?,?)", (start,source))
+                        evidence = {"modelo":source, "p_up":score, "hora_resultado":ready}
+                        message = "Predicción experimental de Laya" if score is not None else detail
+                        db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
+                                   (start,ready,"Laya","Supervisor",message,json.dumps(evidence)))
+                    status(source + " · " + detail)
             remaining = 300-time.time()%300
             stop.wait(min(0.4 if now-start < 15 else 10, remaining))
 

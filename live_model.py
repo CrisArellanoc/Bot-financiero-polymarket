@@ -44,6 +44,7 @@ def fit_candidate(rows):
     from sklearn.linear_model import LogisticRegression
     from sklearn.neural_network import MLPClassifier
     from sklearn.preprocessing import StandardScaler
+    from threadpoolctl import threadpool_limits
 
     rows = sorted(rows, key=lambda r: r[0])[-MAX_ROWS:]
     if len(rows) < MIN_ROWS:
@@ -57,8 +58,9 @@ def fit_candidate(rows):
         return None, {**report, "eligible": False, "reason": "Faltan ambas clases tras purgar etiquetas tardías"}
     xs, ys = [r[1] for r in train], [r[2] for r in train]
     scaler = StandardScaler().fit(xs)
-    net = MLPClassifier(hidden_layer_sizes=(8,), activation="tanh", solver="lbfgs",
-                        alpha=1, max_iter=400, random_state=123).fit(scaler.transform(xs), ys)
+    with threadpool_limits(limits=1):
+        net = MLPClassifier(hidden_layer_sizes=(8,), activation="tanh", solver="lbfgs",
+                            alpha=1, max_iter=400, random_state=123).fit(scaler.transform(xs), ys)
     model = {"mean": scaler.mean_.tolist(), "scale": scaler.scale_.tolist(),
              "w1": net.coefs_[0].tolist(), "b1": net.intercepts_[0].tolist(),
              "w2": net.coefs_[1][:, 0].tolist(), "b2": float(net.intercepts_[1][0])}

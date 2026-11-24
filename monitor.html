@@ -291,7 +291,7 @@
       <section>
         <article class="stack">
           <div class="bar">
-            <h2>Supervisor de IA local</h2>
+            <h2>Supervisor de IA</h2>
             <small id="observerModel"></small>
           </div>
           <p id="observerNote"></p>
@@ -397,7 +397,7 @@
         set("labels", a.labeled + " / " + a.predictions)
         set("interval", local(s.focus, true))
         chart(s)
-        set("layaSignal", s.laya?.p != null ? "Laya experimental · " + (s.laya.p >= .5 ? "Up" : "Down") + " · puntuación Up " + pct(s.laya.p) : "Laya · " + (s.laya?.detail ?? s.laya_status))
+        set("layaSignal", s.laya?.p != null ? s.laya.source + " · " + (s.laya.p >= .5 ? "Up" : "Down") + " · puntuación Up " + pct(s.laya.p) : "Laya · " + (s.laya?.detail ?? s.laya_status))
         set(
           "signal",
           f?.p == null
@@ -438,12 +438,12 @@
         set("lastTime", t ? "Recibida " + local(t.seen) + " · mercado " + local(t.start, true) : "")
         const obs = s.observer,
           note = s.notes?.[0]
-        set("observerModel", obs ? obs.model + " · Ollama" : "Ollama")
-        set("observerNote", note ? note.note : "Esperando un informe local para este intervalo.")
+        set("observerModel", obs?.model ?? "Esperando conexión")
+        set("observerNote", note ? note.note : "Esperando un informe para este intervalo.")
         set(
           "observerStatus",
           (obs?.detail ?? "Iniciando supervisión") +
-            (note ? " · Informe de " + local(note.at) + " · " + note.level : ""),
+            (note ? " · Informe de " + note.model + " · " + local(note.at) + " · " + note.level : ""),
         )
         const events = el("events")
         events.replaceChildren()

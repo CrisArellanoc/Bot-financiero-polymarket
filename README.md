@@ -12,26 +12,48 @@ python live_paper.py
 
 Abre [el monitor local](http://127.0.0.1:8765). Déjalo corriendo para acumular intervalos y detén el proceso con Ctrl+C. Guarda cotizaciones, mensajes, pronósticos, etiquetas, modelos y cartera en `data/live_paper.sqlite`. Al reiniciar vuelve a la misma cartera. El selector permite explorar un intervalo anterior y desplegar los datos de cada mensaje. El notebook sigue siendo la entrada para el análisis histórico.
 
-### Laya experimental y gráfica del mercado activo
+### Dos modelos en el servidor
 
-El modo ligero carga un único predictor Laya en CPU y limita PyTorch a un hilo de cálculo. Para preparar el entorno por primera vez, desde la raíz:
+El modo predeterminado usa dos conexiones HTTPS independientes. Laya recibe las cinco variables congeladas al abrir el mercado, devuelve una puntuación Up experimental y deja constancia de cuándo estuvo disponible. El supervisor revisa los eventos del bot, incluida la predicción de Laya. Comprueba actividad cada pocos segundos y recibe un control periódico de cotización y actividad aproximadamente cada minuto mientras el proceso está funcionando. Selecciona los hechos relevantes y marca observación o atención. Las reglas deterministas y la cartera siguen gobernando las compras simuladas.
+
+### Configuración privada en Windows
+
+Desde la carpeta que contiene `live_paper.py`, crea tu archivo privado una sola vez:
 
 ```powershell
-python -m pip install laya==0.5.0
-python laya_shadow.py
+if (!(Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
+notepad .env
 ```
 
-La descarga prepara el checkpoint inglés de Laya en `models/laya-en`. En cada apertura, Laya lee las cinco variables previamente congeladas y responde una pregunta binaria. Su puntuación para Up es experimental y queda fuera de las decisiones de compra. El panel compara acierto con el libro y el MLP usando las resoluciones de los mismos intervalos.
+En `MODEL_API_KEY` pega la clave de acceso del workspace. Si las credenciales son distintas, usa `SUPERVISOR_API_KEY` y `LAYA_API_KEY`. Para el workspace Local IA configura las URLs HTTPS completas con el mismo origen del panel y estas rutas:
 
-La gráfica usa el contrato Up del intervalo activo y toma muestras del CLOB aproximadamente cada cinco segundos. Muestra el punto medio bid/ask o, si el spread supera 0.10, la última operación. La segunda línea comienza cuando está disponible la predicción y queda fija. Las dos series usan escala 0–100%; el precio spot BTC/USD se mide en otras unidades. Las ventanas antiguas sin muestras conservan sus datos originales. Si faltan pesos o falla la inferencia, el monitor lo indica.
+| Variable | Valor |
+| --- | --- |
+| SUPERVISOR_API_URL | Origen del panel seguido de `/v1/chat/completions` |
+| SUPERVISOR_MODEL | Vacío para usar el primer identificador que devuelva `/v1/models`, o elige uno explícitamente |
+| LAYA_API_URL | Origen del panel seguido de `/api/v1/laya/agent` |
+| LAYA_API_FORMAT | `workspace` (estado de texto y pregunta binaria). Para servidores Jev nativos también se admite `systemone`; para chat compatible usa `chat` y define `LAYA_MODEL`. |
+| MODEL_CA_FILE | Si el servidor usa una CA privada, ruta al certificado público de esa CA en formato PEM obtenido de su administrador. Vacío utiliza la confianza del sistema. |
 
-### Supervisor opcional con Ollama
 
-Para activar el supervisor adicional, ejecuta `python live_paper.py --modelo-local qwen3.5:4b` con Ollama abierto. El modelo revisa los mensajes del agente, clasifica su estado y selecciona los hechos que destaca en la sección **Supervisor de IA local**. Cada importe, dirección y motivo visible procede del evento registrado. Puedes contrastar el informe con los mensajes debajo de la gráfica.
+Si Windows o Python indican que la autoridad certificadora del servidor es desconocida, solicita al administrador el certificado público de su CA en formato PEM y guarda la ruta absoluta en `MODEL_CA_FILE`. Este archivo permite verificar la identidad del servidor al enviar la clave. La prueba autenticada quedará pendiente hasta completar la clave y la confianza TLS.
 
-La inferencia utiliza exclusivamente `127.0.0.1:11434` y pesos instalados en el equipo. El proceso descarta modelos remotos, bloquea redirecciones y prescinde de claves, descargas automáticas y APIs de IA de pago. Polymarket sigue usando Internet para proporcionar datos públicos. Si Ollama está apagado, el panel muestra el error y vuelve a intentar tras 30 segundos. La recopilación y el control de riesgo se ejecutan independientemente. El supervisor agrupa los eventos recientes de cada intervalo y atiende primero los más nuevos tras una pausa. Los informes terminados se guardan en disco. [API local de Ollama](https://docs.ollama.com/api/chat)
+Con la red privada o VPN conectada, prueba ambas rutas. Esta comprobación envía dos peticiones de inferencia con datos de ejemplo y muestra el estado por servicio. Después inicia el proceso y abre [el panel](http://127.0.0.1:8765). Reinicia el proceso tras editar las variables.
 
-Para elegir otro modelo de texto ya instalado, comprueba su nombre con `ollama list` y ejecuta `python live_paper.py --modelo-local NOMBRE`.
+```powershell
+.\.venv\Scripts\python.exe live_paper.py --verificar-conexion
+.\.venv\Scripts\python.exe live_paper.py
+```
+
+El agente pide a Polymarket datos públicos por Gamma y CLOB. El modo Paper funciona sin clave de Polymarket. Conserva las credenciales privadas del exchange y de la billetera fuera de las variables de inferencia. [Autenticación de Polymarket](https://docs.polymarket.com/getting-started/api)
+
+### Consumo local y gráfica
+
+El proceso remoto de inferencia utiliza los recursos del servidor. En tu equipo siguen el colector, SQLite, el panel y el pequeño MLP que se reentrena por lotes. Para la inferencia remota se usa la biblioteca estándar de Python. El bot requiere estar ejecutándose, con acceso al servidor y a Internet. Para que siga observando con la computadora apagada, ejecútalo en un equipo siempre encendido.
+
+La línea verde muestra el contrato Up del intervalo activo y la segunda línea muestra la puntuación de Laya desde su hora de recepción. El panel consulta cada cinco segundos cuando está visible. Conserva el historial de modelos locales anteriores. Las predicciones de Laya se evalúan con las resoluciones oficiales antes de plantear su uso en compras.
+
+El modo local anterior se activa explícitamente con `--modelo-local qwen3.5:4b` para el supervisor o `--laya-local` para el predictor. Solo este último necesita instalar `laya==0.5.0` y ejecutar `python laya_shadow.py` para preparar los pesos.
 
 ### Señal, entrenamiento y compras
 

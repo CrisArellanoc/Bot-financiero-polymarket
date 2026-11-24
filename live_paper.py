@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 import live_model as ml
 import local_observer
 import laya_shadow
+from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
+from settings import load_settings
 from autonomy import Limits, PaperLedger, number
 from market_history import iso, normalize_resolved
 from polymarket_public import CLOB, GAMMA, DataError, get_json, inspect_book, inspect_market
@@ -143,6 +145,7 @@ class Agent:
             CREATE TABLE IF NOT EXISTS chart_prices(start INTEGER,seen REAL,price REAL,PRIMARY KEY(start,seen));
             CREATE TABLE IF NOT EXISTS laya_predictions(start INTEGER PRIMARY KEY,ready REAL,p REAL,detail TEXT);
             CREATE TABLE IF NOT EXISTS laya_status(id INTEGER PRIMARY KEY,detail TEXT);
+            CREATE TABLE IF NOT EXISTS laya_sources(start INTEGER PRIMARY KEY,model TEXT);
             CREATE TABLE IF NOT EXISTS ticks(start INTEGER, seen REAL, ts REAL, bid REAL, ask REAL,
                 bid_size REAL, ask_size REAL, PRIMARY KEY(start,seen));
             CREATE TABLE IF NOT EXISTS forecasts(start INTEGER PRIMARY KEY, x TEXT, seen REAL,
@@ -330,7 +333,8 @@ def snapshot(path, selected=None):
         notes = rows("""SELECT at,model,level,note FROM local_notes WHERE start=? AND revision=?
             ORDER BY through_id DESC LIMIT 5""", (focus, local_observer.REVISION))
         prices = rows("SELECT seen,price FROM chart_prices WHERE start=? ORDER BY seen", (focus,))
-        prediction = rows("SELECT ready,p,detail FROM laya_predictions WHERE start=?", (focus,))
+        prediction = rows("""SELECT ready,p,detail,coalesce(model,'Laya local') AS source
+            FROM laya_predictions LEFT JOIN laya_sources USING(start) WHERE start=?""", (focus,))
         comparison = rows("""SELECT count(*) AS n, avg((l.p>=0.5)=(f.winner='Up')) AS laya,
             avg((json_extract(f.x,'$[0]')>=0.5)=(f.winner='Up')) AS book,
             avg(CASE WHEN f.version LIKE 'MLP-%' THEN ((f.p>=0.5)=(f.winner='Up')) END) AS mlp,
@@ -386,14 +390,36 @@ def main():
     p.add_argument("--db", type=Path, default=Path("data/live_paper.sqlite"))
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--modelo-local", default=None,
-                   help="Nombre de un modelo de texto ya instalado en Ollama")
+                   help="Usar explícitamente un supervisor Ollama en lugar del remoto")
+    p.add_argument("--laya-local", action="store_true", help="Cargar los pesos locales de Laya en CPU")
+    p.add_argument("--verificar-conexion", action="store_true",
+                   help="Probar ambas rutas remotas con datos de ejemplo sin iniciar la cartera")
     args = p.parse_args()
+    config = load_settings()
+    if args.verificar_conexion:
+        raise SystemExit(check_remote(config))
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with writer_lock(args.db):
-        serve(args)
+        serve(args, config)
 
 
-def serve(args):
+def check_remote(config):
+    ok = True
+    for name, client in (("Laya",RemoteLaya),("Supervisor",RemoteSupervisor)):
+        try:
+            connection = client.from_env(config)
+            if name == "Laya":
+                connection.predict([.5,.02,0.,0.,0.])
+            else:
+                connection.explain({"modo":"prueba","mensajes":[{"ref":"E0","hecho":"Prueba de conexión del monitor."}]})
+            print(f"{name}: conexión e inferencia verificadas")
+        except RemoteModelError as exc:
+            ok = False
+            print(f"{name}: {exc}")
+    return 0 if ok else 1
+
+
+def serve(args, config):
     server = ThreadingHTTPServer(("127.0.0.1", args.port), partial(Panel, db_path=args.db))
     agent = Agent(args.db)
     Thread(target=server.serve_forever, daemon=True).start()
@@ -401,9 +427,19 @@ def serve(args):
     if args.modelo_local:
         Thread(target=local_observer.observe, args=(args.db, args.modelo_local, stop), daemon=True).start()
     else:
-        local_observer.status(agent.db, "Opcional", "Desactivado en modo ligero")
+        try:
+            supervisor = RemoteSupervisor.from_env(config)
+            Thread(target=local_observer.observe, args=(args.db, "Remoto · "+supervisor.name, stop, supervisor),
+                   daemon=True).start()
+        except RemoteModelError as exc:
+            local_observer.status(agent.db, "Supervisor remoto", str(exc))
     Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
-    Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop), daemon=True).start()
+    try:
+        predictor = None if args.laya_local else RemoteLaya.from_env(config)
+        Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop,predictor), daemon=True).start()
+    except RemoteModelError as exc:
+        with agent.db:
+            agent.db.execute("INSERT OR REPLACE INTO laya_status VALUES(1,?)", (str(exc),))
     print(f"Monitor Paper en http://127.0.0.1:{server.server_port}  |  Ctrl+C para detener", flush=True)
     try:
         while True:

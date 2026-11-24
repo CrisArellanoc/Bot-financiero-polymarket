@@ -65,15 +65,22 @@ def explain(model, evidence):
     if response.get("done") is not True or response.get("done_reason") == "length":
         raise ValueError("Informe local incompleto")
     note = json.loads(response["message"]["content"])
+    return validate_note(note, evidence)
+
+
+def validate_note(note, evidence):
+    refs = {f"E{i}": event["hecho"] for i, event in enumerate(evidence["mensajes"])}
     if not isinstance(note, dict) or note.get("estado") not in LEVELS:
         raise ValueError("Estado de monitor inválido")
     first, second = note.get("principal"), note.get("secundario")
-    if first not in refs or (second != "ninguno" and second not in refs):
+    if not isinstance(first, str) or not isinstance(second, str) or first not in refs or (second != "ninguno" and second not in refs):
         raise ValueError("Ollama seleccionó evidencia inexistente")
     return note["estado"], " ".join(fact for ref, fact in refs.items() if ref in (first, second))
 
 
 def event_fact(source, target, message, data):
+    if source == "Laya" and data.get("p_up") is not None:
+        return f"{data['modelo']} registró una puntuación Up de {data['p_up']:.1%}."
     if message == "Pronóstico de apertura":
         return f"{data['modelo']} estimó Up en {data['p_up']:.1%}. La dirección fue {data['direccion']}."
     if message == "Resultado oficial verificado":
@@ -121,19 +128,28 @@ def next_evidence(db, now):
     return start, through, evidence
 
 
-def observe(path, model, stop):
+def observe(path, model, stop, remote=None):
     with closing(sqlite3.connect(path, timeout=10)) as db:
         status(db, model, "Esperando actividad")
         delay = 0
+        last_check = 0
         while not stop.wait(delay):
             try:
-                pending = next_evidence(db, time.time())
+                now = time.time()
+                if remote and now-last_check >= 60:
+                    health_event(db, now)
+                    last_check = now
+                pending = next_evidence(db, now)
                 if not pending:
                     delay = 4
                     continue
                 start, through, evidence = pending
                 status(db, model, "Analizando intervalo")
-                level, summary = explain(model, evidence)
+                if remote:
+                    level, summary = remote.explain(evidence)
+                    model = "Remoto · " + remote.name
+                else:
+                    level, summary = explain(model, evidence)
                 with db:
                     db.execute("INSERT OR REPLACE INTO local_notes VALUES(?,?,?,?,?,?,?)",
                                (start, through, time.time(), model, level, summary, REVISION))
@@ -142,3 +158,14 @@ def observe(path, model, stop):
             except (URLError, OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
                 status(db, model, f"Reintentará en 30 s · {exc}")
                 delay = 30
+
+
+def health_event(db, now):
+    start = int(now)//300*300
+    tick = db.execute("SELECT max(seen) FROM chart_prices WHERE start=?", (start,)).fetchone()[0]
+    beat = db.execute("SELECT at FROM heartbeat WHERE id=1").fetchone()
+    freshness = "sin cotización" if tick is None else f"última cotización hace {max(0,int(now-tick))} s"
+    activity = "iniciando" if not beat else f"última actividad del bot hace {max(0,int(now-beat[0]))} s"
+    with db:
+        db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
+                   (start,now,"Monitor","Supervisor",f"Control periódico: {freshness}, {activity}", "{}"))

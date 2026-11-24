@@ -144,7 +144,7 @@
   "profitability_target": null,
   "success_definition": "net profitability after costs and risk, supported by out-of-sample prediction quality; no fixed +20% target",
   "execution": "live_paper.py with public REST and simulated ledger",
-  "llm_api": "local Ollama loopback /api/chat; default qwen3.5:4b; read-only observer",
+  "llm_api": "remote supervisor chat and remote experimental Laya by default; credentials in private .env; local inference opt-in",
   "autonomy": {
     "target": "live_data -> prediction_at_start -> deterministic_checks -> automatic_paper_buy -> resolution -> evaluation -> candidate_retraining",
     "real_money_enabled": false,
