@@ -55,7 +55,9 @@ El agente pide a Polymarket datos públicos por Gamma y CLOB. El modo Paper func
 
 El proceso remoto de inferencia utiliza los recursos del servidor. En tu equipo siguen el colector, SQLite, el panel y el pequeño MLP que se reentrena por lotes. Para la inferencia remota se usa la biblioteca estándar de Python. El bot requiere estar ejecutándose, con acceso al servidor y a Internet. Para que siga observando con la computadora apagada, ejecútalo en un equipo siempre encendido.
 
-La línea verde muestra el contrato Up del intervalo activo y la segunda línea muestra la puntuación de Laya desde su hora de recepción. El panel consulta cada cinco segundos cuando está visible. Conserva el historial de modelos locales anteriores. Las predicciones de Laya se evalúan con las resoluciones oficiales antes de plantear su uso en compras.
+La línea naranja muestra el contrato Up del intervalo activo y la segunda línea muestra la puntuación de Laya desde su hora de recepción. El panel consulta cada dos segundos cuando está visible. Conserva el historial de modelos locales anteriores. Las predicciones de Laya se evalúan con las resoluciones oficiales antes de plantear su uso en compras.
+
+La curva usa una interpolación visual que pasa por cada cotización y permanece dentro del rango de sus extremos. El marcador se desplaza suavemente al llegar una nueva muestra. La animación se detiene al ocultar la pestaña y respeta la preferencia de movimiento reducido del navegador. La presentación utiliza las puntuaciones y cotizaciones originales guardadas para evaluar los modelos.
 
 El modo local anterior se activa explícitamente con `--modelo-local qwen3.5:4b` para el supervisor o `--laya-local` para el predictor. Solo este último necesita instalar `laya==0.5.0` y ejecutar `python laya_shadow.py` para preparar los pesos.
 
@@ -66,7 +68,7 @@ El modo local anterior se activa explícitamente con `--modelo-local qwen3.5:4b`
 - La etapa actual registra decisiones y operaciones simuladas. La autenticación de Polymarket para compras y ventas reales se integrará después de validar las señales y los límites de operación.
 - Una puntuación de Laya es un resultado experimental. El panel presenta acierto y Brier por origen (local o remoto), usando las resoluciones oficiales y la referencia del libro sobre los mismos intervalos. Brier mide el error cuadrático de la puntuación y disminuye cuando mejora la estimación. Las muestras pequeñas necesitan más observación para evaluar la estabilidad.
 - Las predicciones que llegan después de los primeros 15 segundos quedan identificadas para análisis. La línea aparece desde su hora real de recepción. Las solicitudes que terminan después del cierre quedan sin puntuación.
-- La gráfica recibe muestras REST del contrato Up aproximadamente cada cinco segundos y deja huecos cuando faltan datos. Cada intervalo conserva su pronóstico de apertura.
+- La gráfica recibe muestras REST del contrato Up aproximadamente cada dos segundos y deja huecos cuando faltan datos. Cada intervalo conserva su pronóstico de apertura.
 - El modo remoto arranca con la biblioteca estándar y carga el pequeño MLP únicamente cuando hay datos suficientes para entrenarlo. Qwen y Laya locales requieren activación explícita. El proceso debe permanecer encendido para observar los mercados.
 
 ### Señal, entrenamiento y compras
@@ -149,6 +151,7 @@ Análisis adicional del candidato: intervalo descriptivo bootstrap de la mejora 
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements-lock.txt
 .venv/Scripts/python.exe -m unittest discover -s tests -v
+node tests/test_market_chart.cjs
 ```
 
 REST y componentes Paper usan biblioteca estándar; entrenamiento requiere las dependencias del archivo de versiones. El capturador WebSocket requiere Node.js 22+.

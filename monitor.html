@@ -104,7 +104,9 @@
         grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
         gap: 14px;
       }
-      .attention { color: var(--amber); }
+      .attention {
+        color: var(--amber);
+      }
       .metric strong {
         display: block;
         font:
@@ -139,6 +141,26 @@
         height: auto;
         display: block;
         margin: 12px 0;
+      }
+      #chart {
+        height: 280px;
+      }
+      .chart-values {
+        display: flex;
+        gap: 28px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+      .chart-values strong {
+        display: block;
+        font-size: 1.6rem;
+        font-variant-numeric: tabular-nums;
+      }
+      #marketPrice {
+        color: #ffa513;
+      }
+      #forecastPrice {
+        color: #94b9ff;
       }
       #empty {
         padding: 18px 0;
@@ -258,16 +280,21 @@
             <h2>Mercado BTC 5 min · Up</h2>
             <small id="interval"></small>
           </div>
+          <div class="chart-values">
+            <div><small>Precio Up</small><strong id="marketPrice">—</strong></div>
+            <div><small>Predicción Up · Laya</small><strong id="forecastPrice">—</strong></div>
+          </div>
           <p id="empty" class="muted"></p>
           <svg
             id="chart"
-            viewBox="0 0 600 175"
+            viewBox="0 0 640 280"
             role="img"
             aria-label="Precio del contrato Up y puntuación experimental de Laya para Up"
           ></svg>
           <div class="legend">
-            <small><i style="background: #6fe2bb"></i>Polymarket · Up</small
-            ><small><i style="background: #94b9ff"></i>Laya · Up al abrir</small><small id="ticks"></small>
+            <small><i style="background: #ffa513"></i>Polymarket · Up</small
+            ><small><i style="background: #94b9ff"></i>Laya · Up al abrir</small
+            ><small id="ticks"></small>
           </div>
           <p id="layaSignal" class="muted"></p>
         </article>
@@ -283,7 +310,8 @@
         <article class="stack">
           <h2>Aprendizaje prospectivo</h2>
           <p id="learning"></p>
-          <small id="comparison"></small><p id="shadowMetrics" class="muted"></p>
+          <small id="comparison"></small>
+          <p id="shadowMetrics" class="muted"></p>
           <div id="sourceMetrics" class="stack"></div>
           <details id="validation">
             <summary>Validación del último candidato</summary>
@@ -317,6 +345,234 @@
     </main>
     <script>
       "use strict"
+      /* Interpolación visual acotada entre cotizaciones. Los datos originales se conservan. */
+
+      class MarketChart {
+        constructor(svg) {
+          this.svg = svg
+          this.rows = []
+          this.focus = null
+          this.forecast = null
+          this.frame = null
+          this.motion = window.matchMedia("(prefers-reduced-motion: reduce)")
+          this.svg.replaceChildren()
+          const gradient = this.add("linearGradient", {
+            id: "market-fill",
+            x1: "0",
+            y1: "0",
+            x2: "0",
+            y2: "1",
+          })
+          gradient.append(
+            this.element("stop", { offset: "0%", "stop-color": "#ffa513", "stop-opacity": ".18" }),
+            this.element("stop", { offset: "100%", "stop-color": "#ffa513", "stop-opacity": "0" }),
+          )
+          this.axes = this.add("g", {})
+          this.area = this.add("path", { fill: "url(#market-fill)" })
+          this.line = this.add("path", {
+            fill: "none",
+            stroke: "#ffa513",
+            "stroke-width": "2.5",
+            "stroke-linecap": "round",
+            "stroke-linejoin": "round",
+          })
+          this.prediction = this.add("path", {
+            fill: "none",
+            stroke: "#94b9ff",
+            "stroke-width": "2",
+            "stroke-dasharray": "7 5",
+          })
+          this.guide = this.add("line", {
+            stroke: "#ffa513",
+            "stroke-opacity": ".45",
+            "stroke-dasharray": "4 5",
+          })
+          this.halo = this.add("circle", {
+            r: "10",
+            fill: "#ffa513",
+            "fill-opacity": ".12",
+            stroke: "#ffa513",
+            "stroke-opacity": ".3",
+          })
+          this.dot = this.add("circle", { r: "4", fill: "#ffa513" })
+          this.resize = new ResizeObserver(() => this.draw())
+          this.resize.observe(svg)
+          document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+              this.cancel()
+              this.draw()
+            }
+          })
+        }
+
+        element(tag, attributes, text) {
+          const node = document.createElementNS("http://www.w3.org/2000/svg", tag)
+          for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value)
+          if (text != null) node.textContent = text
+          return node
+        }
+
+        add(tag, attributes, text) {
+          const node = this.element(tag, attributes, text)
+          this.svg.append(node)
+          return node
+        }
+
+        cancel() {
+          if (this.frame != null) cancelAnimationFrame(this.frame)
+          this.frame = null
+        }
+
+        update(state) {
+          const previous = this.rows.at(-1)
+          const latest = state.prices.at(-1)
+          const animate =
+            previous &&
+            latest &&
+            this.focus === state.focus &&
+            latest.seen > previous.seen &&
+            latest.seen - previous.seen <= 18 &&
+            state.prices.filter((row) => row.seen > previous.seen).length === 1 &&
+            state.focus === state.current &&
+            !document.hidden &&
+            !this.motion.matches
+          this.cancel()
+          this.focus = state.focus
+          this.rows = state.prices
+          this.forecast = state.laya
+          if (!animate) {
+            this.draw()
+            return
+          }
+          const started = performance.now()
+          let lastFrame = -Infinity
+          const tick = (now) => {
+            const progress = Math.min(1, (now - started) / 700)
+            if (now - lastFrame >= 1000 / 30 || progress === 1) {
+              lastFrame = now
+              const eased = progress * progress * (3 - 2 * progress)
+              // Solo se anima el tramo nuevo. El historial ya recibido queda fijo.
+              const point = {
+                seen: previous.seen + (latest.seen - previous.seen) * eased,
+                price: previous.price + (latest.price - previous.price) * eased,
+              }
+              this.draw(point, previous.seen)
+            }
+            this.frame = progress < 1 ? requestAnimationFrame(tick) : null
+          }
+          this.draw(previous, previous.seen)
+          this.frame = requestAnimationFrame(tick)
+        }
+
+        draw(animated = null, cutoff = null) {
+          if (this.focus == null) return
+          const width = Math.max(280, this.svg.getBoundingClientRect().width || 640)
+          const height = 280,
+            left = 10,
+            right = width - 51,
+            top = 18,
+            bottom = height - 39
+          const x = (t) => left + ((right - left) * (t - this.focus)) / 300
+          const y = (price) => bottom - (bottom - top) * price
+          const time = (t) =>
+            new Date(t * 1000).toLocaleTimeString("es-MX", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })
+          if (this.axesKey !== `${width}/${this.focus}`) {
+            this.axesKey = `${width}/${this.focus}`
+            this.svg.setAttribute("viewBox", `0 0 ${width} ${height}`)
+            this.axes.replaceChildren()
+            for (const value of [0, 0.25, 0.5, 0.75, 1]) {
+              const attrs = {
+                x1: left,
+                x2: right,
+                y1: y(value),
+                y2: y(value),
+                stroke: "#35464f",
+                "stroke-opacity": ".55",
+              }
+              if (value === 0.5) attrs["stroke-dasharray"] = "4 5"
+              this.axes.append(
+                this.element("line", attrs),
+                this.element(
+                  "text",
+                  { x: right + 8, y: y(value) + 5, fill: "#afbec4", "font-size": 14 },
+                  Math.round(value * 100) + "%",
+                ),
+              )
+            }
+            for (const offset of [0, 150, 300]) {
+              this.axes.append(
+                this.element(
+                  "text",
+                  {
+                    x: x(this.focus + offset),
+                    y: height - 9,
+                    fill: "#afbec4",
+                    "font-size": 14,
+                    "text-anchor": offset === 0 ? "start" : offset === 300 ? "end" : "middle",
+                  },
+                  time(this.focus + offset),
+                ),
+              )
+            }
+          }
+          const rows = animated
+            ? this.rows.filter((row) => row.seen <= cutoff).concat(animated)
+            : this.rows
+          let path = "",
+            area = "",
+            segment = "",
+            first = null,
+            previous = null
+          const closeArea = () => {
+            if (previous)
+              area += segment + ` L ${x(previous.seen)} ${bottom} L ${x(first.seen)} ${bottom} Z `
+          }
+          for (const row of rows) {
+            if (!previous || row.seen - previous.seen > 18) {
+              closeArea()
+              first = row
+              segment = `M ${x(row.seen)} ${y(row.price)}`
+              path += ` M ${x(row.seen)} ${y(row.price)}`
+            } else {
+              const middle = (x(previous.seen) + x(row.seen)) / 2
+              // Estos controles mantienen la curva dentro del rango de sus dos cotizaciones.
+              const curve = ` C ${middle} ${y(previous.price)}, ${middle} ${y(row.price)}, ${x(row.seen)} ${y(row.price)}`
+              segment += curve
+              path += curve
+            }
+            previous = row
+          }
+          closeArea()
+          this.line.setAttribute("d", path)
+          this.area.setAttribute("d", area)
+          const last = rows.at(-1)
+          for (const node of [this.dot, this.halo, this.guide]) node.style.display = last ? "" : "none"
+          if (last) {
+            for (const node of [this.dot, this.halo]) {
+              node.setAttribute("cx", x(last.seen))
+              node.setAttribute("cy", y(last.price))
+            }
+            this.guide.setAttribute("x1", x(last.seen))
+            this.guide.setAttribute("x2", right)
+            this.guide.setAttribute("y1", y(last.price))
+            this.guide.setAttribute("y2", y(last.price))
+            const stale = Date.now() / 1000 - this.rows.at(-1).seen > 18
+            this.halo.style.display = stale ? "none" : ""
+          }
+          const f = this.forecast
+          let forecastPath = ""
+          if (f?.p != null) {
+            const end = Math.min(this.focus + 300, Date.now() / 1000)
+            if (f.ready <= end) forecastPath = `M ${x(f.ready)} ${y(f.p)} L ${x(end)} ${y(f.p)}`
+          }
+          this.prediction.setAttribute("d", forecastPath)
+        }
+      }
+
       const el = (id) => document.getElementById(id),
         set = (id, v) => (el(id).textContent = v)
       const pct = (n) => (n == null ? "—" : (n * 100).toFixed(1) + " %"),
@@ -334,63 +590,69 @@
         if (cls) n.className = cls
         return n
       }
+      const marketChart = new MarketChart(el("chart"))
       function chart(s) {
-        const rows = s.prices, forecast = s.laya
+        const rows = s.prices,
+          forecast = s.laya
         const available = rows.length || forecast?.p != null
-        const svg = el("chart")
-        svg.replaceChildren()
-        svg.style.display = available ? "block" : "none"
+        el("chart").style.display = available ? "block" : "none"
         set("empty", available ? "" : "Esperando cotizaciones del contrato durante el intervalo.")
         el("empty").hidden = !!available
         const last = rows.at(-1)
-        const delayed = last && s.focus === s.current && Date.now()/1000-last.seen > 18
-        set("ticks", last ? (delayed ? "Sin actualización reciente · " : "Última lectura · ") +
-          local(last.seen) + " · " + pct(last.price) : "Sin precio del intervalo")
-        if (!available) return
-        function add(kind, attrs, txt) {
-          const n = document.createElementNS("http://www.w3.org/2000/svg", kind)
-          for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v)
-          if (txt != null) n.textContent = txt
-          svg.append(n)
-        }
-        const x = t => 53 + 535 * (t - s.focus) / 300
-        const y = p => 136 - 112 * p
-        for (const p of [0, .5, 1]) {
-          add("line", {x1:53,x2:588,y1:y(p),y2:y(p),stroke:"#35464f"})
-          add("text",{x:1,y:y(p)+4,fill:"#afbec4","font-size":14}, Math.round(100*p)+"%")
-        }
-        let prev
-        for (const row of rows) {
-          if (prev && row.seen-prev.seen <= 18)
-            add("line",{x1:x(prev.seen),x2:x(row.seen),y1:y(prev.price),y2:y(row.price),stroke:"#6fe2bb","stroke-width":2})
-          add("circle",{cx:x(row.seen),cy:y(row.price),r:2,fill:"#6fe2bb"})
-          prev=row
-        }
-        if (forecast?.p != null) {
-          const end=Math.min(s.focus+300,Date.now()/1000)
-          add("line",{x1:x(forecast.ready),x2:x(Math.max(forecast.ready,end)),y1:y(forecast.p),y2:y(forecast.p),
-            stroke:"#94b9ff","stroke-width":2,"stroke-dasharray":"6 3"})
-        }
-        add("text",{x:53,y:166,fill:"#afbec4","font-size":14},local(s.focus))
-        add("text",{x:588,y:166,fill:"#afbec4","text-anchor":"end","font-size":14},local(s.focus+300))
-
+        const delayed = last && s.focus === s.current && Date.now() / 1000 - last.seen > 18
+        set(
+          "ticks",
+          last
+            ? (delayed ? "Sin actualización reciente · " : "Última lectura · ") +
+                local(last.seen) +
+                " · " +
+                pct(last.price)
+            : "Sin precio del intervalo",
+        )
+        set("marketPrice", pct(last?.price))
+        set("forecastPrice", pct(forecast?.p))
+        marketChart.update(s)
       }
       function connections(s) {
         const root = el("connections")
         root.replaceChildren()
-        const names = {polymarket:"Datos de Polymarket",laya:"Predicción de Laya",supervisor:"Verificación del modelo"}
-        const states = {waiting:"En espera",busy:"Procesando",ok:"Última respuesta correcta",
-          error:"Conexión con incidencia",unconfigured:"Configuración pendiente"}
+        const names = {
+          polymarket: "Datos de Polymarket",
+          laya: "Predicción de Laya",
+          supervisor: "Verificación del modelo",
+        }
+        const states = {
+          waiting: "En espera",
+          busy: "Procesando",
+          ok: "Última respuesta correcta",
+          error: "Conexión con incidencia",
+          unconfigured: "Configuración pendiente",
+        }
         for (const item of s.services ?? []) {
           let label = states[item.state] ?? item.state
-          const stale = (item.service === "polymarket" && item.state === "ok" && Date.now()/1000-item.at > 20) ||
-            (item.service === "supervisor" && Date.now()/1000-item.at > 100)
+          const stale =
+            (item.service === "polymarket" &&
+              item.state === "ok" &&
+              Date.now() / 1000 - item.at > 20) ||
+            (item.service === "supervisor" && Date.now() / 1000 - item.at > 100)
           if (stale) label = "Sin actualización reciente"
           const card = node("article", null, "stack")
-          card.append(node("h3", names[item.service]),
-            node("p", label, stale || ["error","unconfigured"].includes(item.state) ? "attention" : ""),
-            node("small",item.detail),
-            node("p",item.last_ok ? "Última respuesta correcta · "+local(item.last_ok,true) : "Esperando primera respuesta","muted"))
+          card.append(
+            node("h3", names[item.service]),
+            node(
+              "p",
+              label,
+              stale || ["error", "unconfigured"].includes(item.state) ? "attention" : "",
+            ),
+            node("small", item.detail),
+            node(
+              "p",
+              item.last_ok
+                ? "Última respuesta correcta · " + local(item.last_ok, true)
+                : "Esperando primera respuesta",
+              "muted",
+            ),
+          )
           root.append(card)
         }
       }
@@ -425,9 +687,18 @@
         set("labels", a.labeled + " / " + a.predictions)
         set("interval", local(s.focus, true))
         chart(s)
-        set("layaSignal", s.laya?.p != null ? s.laya.source + " · " + (s.laya.p >= .5 ? "Up" : "Down") + " · puntuación Up " + pct(s.laya.p) : "Laya · " + (s.laya?.detail ?? s.laya_status))
-        if (s.laya?.p != null && s.laya.ready > s.focus+15)
-          set("layaSignal",el("layaSignal").textContent+" · llegó después de los primeros 15 s")
+        set(
+          "layaSignal",
+          s.laya?.p != null
+            ? s.laya.source +
+                " · " +
+                (s.laya.p >= 0.5 ? "Up" : "Down") +
+                " · puntuación Up " +
+                pct(s.laya.p)
+            : "Laya · " + (s.laya?.detail ?? s.laya_status),
+        )
+        if (s.laya?.p != null && s.laya.ready > s.focus + 15)
+          set("layaSignal", el("layaSignal").textContent + " · llegó después de los primeros 15 s")
         set(
           "signal",
           f?.p == null
@@ -455,17 +726,40 @@
         el("validation").hidden = !s.model
         set("report", s.model ? JSON.stringify(s.model.report, null, 2) : "")
         const comp = s.comparison
-        set("shadowMetrics", "Acierto sobre " + comp.n + " intervalos comunes: Laya " + pct(comp.laya) +
-          " / libro " + pct(comp.book) + ". Con MLP disponible (" + comp.mlp_n + "): Laya " +
-          pct(comp.laya_shared) + " / MLP " + pct(comp.mlp) + ".")
+        set(
+          "shadowMetrics",
+          "Acierto sobre " +
+            comp.n +
+            " intervalos comunes: Laya " +
+            pct(comp.laya) +
+            " / libro " +
+            pct(comp.book) +
+            ". Con MLP disponible (" +
+            comp.mlp_n +
+            "): Laya " +
+            pct(comp.laya_shared) +
+            " / MLP " +
+            pct(comp.mlp) +
+            ".",
+        )
         const sources = el("sourceMetrics")
         sources.replaceChildren()
         for (const result of s.comparison_by_source ?? []) {
           const box = node("div")
-          box.append(node("h3",result.source+" · "+result.n+" resultados"),
-            node("p","Acierto Laya "+pct(result.accuracy)+" / libro "+pct(result.book_accuracy)),
-            node("small","Brier Laya "+result.brier.toFixed(3)+" / libro "+result.book_brier.toFixed(3)+
-              " (menor es mejor) · "+result.delayed+" respuestas después de 15 s"))
+          box.append(
+            node("h3", result.source + " · " + result.n + " resultados"),
+            node("p", "Acierto Laya " + pct(result.accuracy) + " / libro " + pct(result.book_accuracy)),
+            node(
+              "small",
+              "Brier Laya " +
+                result.brier.toFixed(3) +
+                " / libro " +
+                result.book_brier.toFixed(3) +
+                " (menor es mejor) · " +
+                result.delayed +
+                " respuestas después de 15 s",
+            ),
+          )
           sources.append(box)
         }
         const t = s.last_tick
@@ -547,8 +841,12 @@
       setInterval(async () => {
         if (document.hidden || polling) return
         polling = true
-        try { await refresh() } finally { polling = false }
-      }, 5000)
+        try {
+          await refresh()
+        } finally {
+          polling = false
+        }
+      }, 2000)
     </script>
   </body>
 </html>

@@ -135,7 +135,7 @@ def chart_feed(path, stop):
                     service_status.record(db, "polymarket", "ok", "Cotización pública recibida", success=True)
             except API_ERRORS as exc:
                 service_status.record(db, "polymarket", "error", f"Lectura pendiente · {exc}")
-            stop.wait(min(5, 300-time.time()%300))
+            stop.wait(min(2, 300-time.time()%300))
 
 
 class Agent:
