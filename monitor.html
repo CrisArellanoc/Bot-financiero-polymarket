@@ -173,6 +173,7 @@
       .layout {
         display: grid;
         grid-template-columns: minmax(0, 1fr) 310px;
+        align-items: start;
         gap: 18px;
       }
       article,
@@ -195,7 +196,8 @@
         height: auto;
         display: block;
       }
-      #chart {
+      #chart,
+      #btcChart {
         height: 300px;
         margin: 16px 0 5px;
       }
@@ -297,15 +299,64 @@
         cursor: pointer;
         outline: none;
       }
-      .network .module rect {
+      .network .module .soma {
         fill: #151e2a;
         stroke: #364357;
         transition: stroke 0.2s;
       }
-      .network .module:hover rect,
-      .network .module:focus-visible rect,
-      .network .module.selected rect {
+      .network .module:hover .soma,
+      .network .module:focus-visible .soma,
+      .network .module.selected .soma,
+      .network .module.firing .soma {
         stroke: #94b9ff;
+      }
+      .network .dendrite {
+        fill: none;
+        stroke: #465972;
+        stroke-width: 1.3;
+      }
+      .network .aura {
+        fill: #94b9ff;
+        opacity: 0.035;
+        transition: opacity 0.2s;
+      }
+      .network .module.firing .aura {
+        opacity: 0.22;
+      }
+      .network .module.firing .dendrite {
+        stroke: #82c8ad;
+      }
+      .teacher-badge {
+        font-size: 0.75rem;
+        color: var(--muted);
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .teacher-badge::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #738397;
+      }
+      .teacher-badge[data-state="ok"]::before {
+        background: #82c8ad;
+        box-shadow: 0 0 5px #82c8ad55;
+      }
+      .teacher-badge[data-state="error"]::before {
+        background: #e5b66a;
+      }
+      #btcCurrent {
+        color: #ffa513;
+      }
+      #btcPrediction {
+        color: #d4a3ff;
+      }
+      .probability-panel {
+        margin-top: 18px;
+        border-top: 1px solid var(--line);
+        padding-top: 10px;
       }
       .flow-edge {
         fill: none;
@@ -457,7 +508,12 @@
           <div class="brand">BTC / POLYMARKET</div>
           <h1>Terminal de investigación</h1>
         </div>
-        <span class="tag">Etapa 1 · Simulación</span>
+        <div class="stack" style="text-align: right">
+          <span class="tag">Etapa 1 · Simulación</span><br />
+          <span id="teacherBadge" class="teacher-badge" data-state="waiting" role="status"
+            >API del profesor · verificando</span
+          >
+        </div>
       </header>
       <section class="bar">
         <span id="health" role="status">Conectando con el agente…</span>
@@ -478,28 +534,51 @@
       <section class="layout">
         <article>
           <div class="bar">
-            <h2>BTC · Contrato Up</h2>
+            <h2>BTC / USD · Mercado de 5 minutos</h2>
             <small id="interval"></small>
           </div>
           <div class="chart-values">
-            <div><small>Precio Up</small><strong id="marketPrice">—</strong></div>
-            <div><small>Laya · Predicción Up</small><strong id="forecastPrice">—</strong></div>
-            <div><small>MLP Yahoo · Predicción Up</small><strong id="yahooPrice">—</strong></div>
+            <div><small>Precio a superar · Polymarket</small><strong id="btcTarget">—</strong></div>
+            <div><small>BTC actual · Yahoo</small><strong id="btcCurrent">—</strong></div>
+            <div>
+              <small>MLP · Estimación del cierre</small><strong id="btcPrediction">—</strong>
+            </div>
           </div>
-          <p id="empty" class="muted"></p>
           <svg
-            id="chart"
+            id="btcChart"
             viewBox="0 0 640 280"
             role="img"
-            aria-label="Precio del contrato Up y predicciones de Laya y MLP Yahoo"
+            aria-label="BTC en dólares, precio a superar de Polymarket y cierre estimado por el MLP"
           ></svg>
           <div class="legend">
-            <small><i style="background: #ffa513"></i>Polymarket</small>
-            <small><i style="background: #94b9ff"></i>Laya</small>
-            <small><i style="background: #d4a3ff"></i>MLP Yahoo</small>
+            <small><i style="background: #a5afbc"></i>Precio a superar</small>
+            <small><i style="background: #ffa513"></i>BTC-USD · Yahoo</small>
+            <small><i style="background: #d4a3ff"></i>Cierre estimado · MLP Yahoo</small>
           </div>
-          <small id="ticks"></small>
-          <p id="layaSignal" class="section-note"></p>
+          <p id="btcStatus" class="section-note"></p>
+          <p id="btcSource" class="section-note"></p>
+          <details class="probability-panel">
+            <summary>Contrato Up y probabilidades de los modelos</summary>
+            <div class="chart-values">
+              <div><small>Precio Up</small><strong id="marketPrice">—</strong></div>
+              <div><small>Laya · Predicción Up</small><strong id="forecastPrice">—</strong></div>
+              <div><small>MLP Yahoo · Predicción Up</small><strong id="yahooPrice">—</strong></div>
+            </div>
+            <p id="empty" class="muted"></p>
+            <svg
+              id="chart"
+              viewBox="0 0 640 280"
+              role="img"
+              aria-label="Precio del contrato Up y predicciones de Laya y MLP Yahoo"
+            ></svg>
+            <div class="legend">
+              <small><i style="background: #ffa513"></i>Polymarket</small>
+              <small><i style="background: #94b9ff"></i>Laya</small>
+              <small><i style="background: #d4a3ff"></i>MLP Yahoo</small>
+            </div>
+            <small id="ticks"></small>
+            <p id="layaSignal" class="section-note"></p>
+          </details>
         </article>
         <article class="stack">
           <h2>Decisión simulada</h2>
@@ -514,9 +593,13 @@
         </article>
       </section>
       <section class="bar">
-        <h2>Flujo de información</h2>
+        <h2>Red de comunicación</h2>
         <button type="button" id="replayFlow">Reproducir eventos</button>
       </section>
+      <p class="section-note">
+        Cada neurona representa un módulo. Los impulsos siguen mensajes registrados, no activaciones
+        internas del modelo.
+      </p>
       <section class="flow-grid">
         <div class="flow-left">
           <div class="bar">
@@ -567,11 +650,13 @@
           <h2>MLP de Yahoo Finance</h2>
           <p id="yahooState"></p>
           <p id="yahooHistory" class="muted"></p>
+          <p id="yahooRegression" class="muted"></p>
           <div id="yahooMetrics" class="stack"></div>
         </article>
       </section>
       <footer>
-        Precios del contrato en porcentaje · Pronósticos de apertura · Contabilidad en USD virtuales
+        BTC en USD con fuentes distintas · Contrato en porcentaje · Pronósticos experimentales ·
+        Cartera virtual
       </footer>
     </main>
 
@@ -580,7 +665,8 @@
       /* Interpolación visual acotada entre cotizaciones. Los datos originales se conservan. */
 
       class MarketChart {
-        constructor(svg) {
+        constructor(svg, usd = false) {
+          this.usd = usd
           this.svg = svg
           this.rows = []
           this.focus = null
@@ -589,18 +675,28 @@
           this.motion = window.matchMedia("(prefers-reduced-motion: reduce)")
           this.svg.replaceChildren()
           const gradient = this.add("linearGradient", {
-            id: "market-fill",
+            id: usd ? "btc-fill" : "market-fill",
             x1: "0",
             y1: "0",
             x2: "0",
             y2: "1",
           })
           gradient.append(
-            this.element("stop", { offset: "0%", "stop-color": "#ffa513", "stop-opacity": ".18" }),
-            this.element("stop", { offset: "100%", "stop-color": "#ffa513", "stop-opacity": "0" }),
+            this.element("stop", {
+              offset: "0%",
+              "stop-color": "#ffa513",
+              "stop-opacity": ".18",
+            }),
+            this.element("stop", {
+              offset: "100%",
+              "stop-color": "#ffa513",
+              "stop-opacity": "0",
+            }),
           )
           this.axes = this.add("g", {})
-          this.area = this.add("path", { fill: "url(#market-fill)" })
+          this.area = this.add("path", {
+            fill: usd ? "url(#btc-fill)" : "url(#market-fill)",
+          })
           this.line = this.add("path", {
             fill: "none",
             stroke: "#ffa513",
@@ -625,6 +721,16 @@
             "stroke-opacity": ".45",
             "stroke-dasharray": "4 5",
           })
+          this.targetLine = this.add("line", {
+            stroke: "#a5afbc",
+            "stroke-width": 1,
+            "stroke-dasharray": "6 5",
+          })
+          this.targetLabel = this.add(
+            "text",
+            { fill: "#c4ccd6", "font-size": 11 },
+            "Precio a superar",
+          )
           this.halo = this.add("circle", {
             r: "10",
             fill: "#ffa513",
@@ -662,6 +768,19 @@
         }
 
         update(state) {
+          if (this.usd) {
+            this.reference = state.btc?.target
+            const f = state.btc?.forecast
+            state = {
+              focus: state.focus,
+              current: state.current,
+              prices: (state.btc?.quotes ?? []).map((r) => ({
+                seen: r.ts,
+                price: r.price,
+              })),
+              laya: f?.price != null ? { ready: f.ready, p: f.price } : null,
+            }
+          }
           const previous = this.rows.at(-1)
           const latest = state.prices.at(-1)
           const animate =
@@ -669,7 +788,7 @@
             latest &&
             this.focus === state.focus &&
             latest.seen > previous.seen &&
-            latest.seen - previous.seen <= 18 &&
+            latest.seen - previous.seen <= (this.usd ? 75 : 18) &&
             state.prices.filter((row) => row.seen > previous.seen).length === 1 &&
             state.focus === state.current &&
             !document.hidden &&
@@ -678,6 +797,7 @@
           this.focus = state.focus
           this.rows = state.prices
           this.forecast = state.laya
+          this.prediction.setAttribute("stroke", this.usd ? "#d4a3ff" : "#94b9ff")
           this.yahooForecast = state.yahoo?.forecast
           if (!animate) {
             this.draw()
@@ -708,22 +828,34 @@
           const width = Math.max(280, this.svg.getBoundingClientRect().width || 640)
           const height = 280,
             left = 10,
-            right = width - 51,
+            right = width - (this.usd ? 89 : 51),
             top = 18,
             bottom = height - 39
           const x = (t) => left + ((right - left) * (t - this.focus)) / 300
-          const y = (price) => bottom - (bottom - top) * price
+          const values = this.rows.map((r) => r.price)
+          if (this.reference?.price != null) values.push(this.reference.price)
+          if (this.forecast?.p != null) values.push(this.forecast.p)
+          let lo = 0,
+            hi = 1
+          if (this.usd && values.length) {
+            const low = Math.min(...values),
+              high = Math.max(...values)
+            const pad = Math.max(3, (high - low) * 0.18)
+            lo = low - pad
+            hi = high + pad
+          }
+          const y = (price) => bottom - (bottom - top) * ((price - lo) / (hi - lo))
           const time = (t) =>
             new Date(t * 1000).toLocaleTimeString("es-MX", {
               hour: "2-digit",
               minute: "2-digit",
               hour12: false,
             })
-          if (this.axesKey !== `${width}/${this.focus}`) {
-            this.axesKey = `${width}/${this.focus}`
+          if (this.axesKey !== `${width}/${this.focus}/${lo}/${hi}`) {
+            this.axesKey = `${width}/${this.focus}/${lo}/${hi}`
             this.svg.setAttribute("viewBox", `0 0 ${width} ${height}`)
             this.axes.replaceChildren()
-            for (const value of [0, 0.25, 0.5, 0.75, 1]) {
+            for (const value of [0, 0.25, 0.5, 0.75, 1].map((v) => lo + (hi - lo) * v)) {
               const attrs = {
                 x1: left,
                 x2: right,
@@ -737,8 +869,19 @@
                 this.element("line", attrs),
                 this.element(
                   "text",
-                  { x: right + 8, y: y(value) + 5, fill: "#afbec4", "font-size": 14 },
-                  Math.round(value * 100) + "%",
+                  {
+                    x: right + 8,
+                    y: y(value) + 5,
+                    fill: "#afbec4",
+                    "font-size": 14,
+                  },
+                  this.usd
+                    ? "$" +
+                        value.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                    : Math.round(value * 100) + "%",
                 ),
               )
             }
@@ -771,7 +914,7 @@
               area += segment + ` L ${x(previous.seen)} ${bottom} L ${x(first.seen)} ${bottom} Z `
           }
           for (const row of rows) {
-            if (!previous || row.seen - previous.seen > 18) {
+            if (!previous || row.seen - previous.seen > (this.usd ? 75 : 18)) {
               closeArea()
               first = row
               segment = `M ${x(row.seen)} ${y(row.price)}`
@@ -789,7 +932,8 @@
           this.line.setAttribute("d", path)
           this.area.setAttribute("d", area)
           const last = rows.at(-1)
-          for (const node of [this.dot, this.halo, this.guide]) node.style.display = last ? "" : "none"
+          for (const node of [this.dot, this.halo, this.guide])
+            node.style.display = last ? "" : "none"
           if (last) {
             for (const node of [this.dot, this.halo]) {
               node.setAttribute("cx", x(last.seen))
@@ -802,13 +946,29 @@
             const stale = Date.now() / 1000 - this.rows.at(-1).seen > 18
             this.halo.style.display = stale ? "none" : ""
           }
+          const target = this.usd ? this.reference?.price : null
+          this.targetLine.style.display = target != null ? "" : "none"
+          this.targetLabel.style.display = target != null ? "" : "none"
+          if (target != null) {
+            for (const [key, value] of Object.entries({
+              x1: left,
+              x2: right,
+              y1: y(target),
+              y2: y(target),
+            }))
+              this.targetLine.setAttribute(key, value)
+            this.targetLabel.setAttribute("x", left + 5)
+            this.targetLabel.setAttribute("y", y(target) - 7)
+          }
           for (const [line, f] of [
             [this.prediction, this.forecast],
             [this.yahooPrediction, this.yahooForecast],
           ]) {
             let forecastPath = ""
             if (f?.p != null) {
-              const end = Math.min(this.focus + 300, Date.now() / 1000)
+              const end = this.usd
+                ? this.focus + 300
+                : Math.min(this.focus + 300, Date.now() / 1000)
               if (f.ready <= end) forecastPath = `M ${x(f.ready)} ${y(f.p)} L ${x(end)} ${y(f.p)}`
             }
             line.setAttribute("d", forecastPath)
@@ -891,16 +1051,53 @@
               "aria-label": label,
               transform: `translate(${x} ${y})`,
             })
-            const dot = this.element("circle", { cx: 124, cy: 15, r: 3, fill: "#738397" })
+            const dot = this.element("circle", {
+              cx: 70,
+              cy: 27,
+              r: 5,
+              fill: "#738397",
+            })
             const sub = this.element(
               "text",
-              { x: 12, y: 41, fill: "#8e9cae", "font-size": 14 },
+              {
+                x: 70,
+                y: 89,
+                "text-anchor": "middle",
+                fill: "#8e9cae",
+                "font-size": 13,
+              },
               subtitle,
             )
             group.append(
-              this.element("rect", { width: 140, height: 55, rx: 6 }),
+              this.element("rect", {
+                x: 0,
+                y: -5,
+                width: 140,
+                height: 100,
+                fill: "transparent",
+                stroke: "none",
+              }),
+              this.element("circle", { class: "aura", cx: 70, cy: 27, r: 33 }),
+              this.element("path", {
+                class: "dendrite",
+                d: "M0 27 C24 27 25 27 48 27 M15 5 L27 16 L48 22 M15 49 L27 38 L48 32 M28 -1 L37 10 L53 15 M28 55 L37 44 L53 39 M92 27 C110 27 116 27 140 27 M112 27 L125 10 M118 27 L132 43 M70 5 L70 -2 M70 49 L70 56",
+              }),
+              this.element("path", {
+                class: "soma",
+                d: "M48 27 C45 18 53 17 55 10 C63 14 68 7 75 9 C78 16 89 14 90 23 C98 30 85 35 86 42 C77 40 76 49 68 45 C61 50 57 37 50 39 Z",
+              }),
               dot,
-              this.element("text", { x: 12, y: 22, fill: "#e7edf4", "font-size": 16 }, label),
+              this.element(
+                "text",
+                {
+                  x: 70,
+                  y: 72,
+                  "text-anchor": "middle",
+                  fill: "#e7edf4",
+                  "font-size": 16,
+                },
+                label,
+              ),
               sub,
             )
             const select = () => {
@@ -938,7 +1135,8 @@
           })
           el("clearFlow").addEventListener("click", () => {
             this.selection = null
-            for (const module of Object.values(this.nodes)) module.group.classList.remove("selected")
+            for (const module of Object.values(this.nodes))
+              module.group.classList.remove("selected")
             el("clearFlow").hidden = true
             this.lastListKey = null
             this.paintList()
@@ -982,21 +1180,30 @@
           this.replaying = false
           this.particles?.replaceChildren()
           for (const line of this.edges.values()) line.style.stroke = ""
+          for (const module of Object.values(this.nodes)) module.group.classList.remove("firing")
         }
         next() {
           if (this.timer != null) return
           const event = this.queue.shift()
           if (!event) {
-            set("flowStatus", this.replaying ? "Reproducción terminada" : "Esperando nuevos mensajes")
+            set(
+              "flowStatus",
+              this.replaying ? "Reproducción terminada" : "Esperando nuevos mensajes",
+            )
             this.replaying = false
             return
           }
           const key = this.alias[event.source] + "/" + this.alias[event.target]
           const line = this.edge(key)
           line.style.stroke = "#82c8ad"
+          const fired = [this.nodes[this.alias[event.source]], this.nodes[this.alias[event.target]]]
+          for (const module of fired) module.group.classList.add("firing")
           set(
             "flowStatus",
-            (this.replaying ? "Reproduciendo · " : "Recibido · ") + event.source + " → " + event.target,
+            (this.replaying ? "Reproduciendo · " : "Recibido · ") +
+              event.source +
+              " → " +
+              event.target,
           )
           if (!this.motion.matches && !document.hidden) {
             const dot = this.element("circle", { r: 4, fill: "#a0e7ce" })
@@ -1012,6 +1219,7 @@
           }
           this.timer = setTimeout(() => {
             line.style.stroke = ""
+            for (const module of fired) module.group.classList.remove("firing")
             this.particles.replaceChildren()
             this.timer = null
             this.next()
@@ -1021,7 +1229,8 @@
           const list = this.selection
             ? this.messages.filter(
                 (e) =>
-                  this.alias[e.source] === this.selection || this.alias[e.target] === this.selection,
+                  this.alias[e.source] === this.selection ||
+                  this.alias[e.target] === this.selection,
               )
             : this.messages
           const key = list.map((e) => e.key).join("|")
@@ -1066,7 +1275,10 @@
           }
           this.messages = s.trace
             .filter((e) => this.alias[e.source] && this.alias[e.target])
-            .map((e, i) => ({ ...e, key: "trace-" + (e.id ?? `${e.at}-${i}`) }))
+            .map((e, i) => ({
+              ...e,
+              key: "trace-" + (e.id ?? `${e.at}-${i}`),
+            }))
           const quote = s.last_tick
           if (s.focus === s.current && quote?.seen >= s.focus) {
             this.messages.push({
@@ -1075,7 +1287,11 @@
               source: "CLOB",
               target: "Libro",
               message: "Libro Up del próximo intervalo actualizado",
-              payload: { market_start: quote.start, bid: quote.bid, ask: quote.ask },
+              payload: {
+                market_start: quote.start,
+                bid: quote.bid,
+                ask: quote.ask,
+              },
             })
           }
           for (const note of s.notes ?? [])
@@ -1115,7 +1331,9 @@
           } else if (first)
             set(
               "flowStatus",
-              s.focus === s.current ? "Esperando nuevos mensajes" : "Registro histórico del intervalo",
+              s.focus === s.current
+                ? "Esperando nuevos mensajes"
+                : "Registro histórico del intervalo",
             )
         }
       }
@@ -1128,8 +1346,19 @@
         new Date(n * 1000).toLocaleString(
           "es-MX",
           day
-            ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
-            : { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false },
+            ? {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              }
+            : {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              },
         )
       function node(tag, txt, cls) {
         const n = document.createElement(tag)
@@ -1138,8 +1367,44 @@
         return n
       }
       const marketChart = new MarketChart(el("chart"))
+      const btcChart = new MarketChart(el("btcChart"), true)
       const flowMap = new FlowMap(el("network"))
       function chart(s) {
+        const btc = s.btc ?? {},
+          lastBtc = btc.quotes?.at(-1),
+          priceForecast = btc.forecast
+        const usd = (v) =>
+          v == null
+            ? "—"
+            : "$" +
+              v.toLocaleString("en-US", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })
+        set("btcTarget", usd(btc.target?.price))
+        set("btcCurrent", usd(lastBtc?.price))
+        set("btcPrediction", usd(priceForecast?.price))
+        const staleBtc = lastBtc && s.focus === s.current && Date.now() / 1000 - lastBtc.ts > 45
+        set(
+          "btcStatus",
+          (lastBtc
+            ? (staleBtc ? "Cotización sin actualización reciente · " : "Cotización Yahoo · ") +
+              local(lastBtc.ts)
+            : "Esperando una cotización reciente de BTC-USD.") +
+            (btc.target
+              ? " · Referencia Polymarket recibida " + local(btc.target.seen)
+              : " · Precio a superar pendiente de publicación."),
+        )
+        set(
+          "btcSource",
+          "BTC actual y cierre estimado usan Yahoo, pueden diferir de Chainlink en Polymarket. " +
+            (priceForecast?.price != null
+              ? "Estimación fija emitida " +
+                local(priceForecast.ready) +
+                " para el cierre del intervalo."
+              : "Estimación en USD pendiente: requiere entrenar el regresor y esperar una nueva apertura con datos válidos."),
+        )
+        btcChart.update(s)
         const rows = s.prices,
           forecast = s.laya
         const available = rows.length || forecast?.p != null
@@ -1162,7 +1427,45 @@
         set("yahooPrice", pct(s.yahoo?.forecast?.p))
         marketChart.update(s)
       }
+      function teacherConnection(items, now = Date.now() / 1000) {
+        if (!items?.length)
+          return {
+            state: "waiting",
+            label: "API del profesor · sin verificar",
+            detail: "No se ha recibido una respuesta remota validada en esta ejecución",
+          }
+        const byName = Object.fromEntries(items.map((i) => [i.service, i]))
+        const supervisor = byName.supervisor,
+          laya = byName.laya
+        const recent = (i) =>
+          i?.last_ok != null && now - i.last_ok <= (i.service === "supervisor" ? 120 : 360)
+        const failure = items.some((i) => i.state === "error")
+        const live = recent(supervisor) && supervisor.state !== "error"
+        const state = failure ? "error" : live ? "ok" : "waiting"
+        const label = failure
+          ? "API del profesor · incidencia"
+          : live
+            ? "API del profesor · conectada · " + local(supervisor.last_ok)
+            : "API del profesor · sin confirmación reciente"
+        const detail =
+          items
+            .map(
+              (i) =>
+                (i.service === "laya" ? "Laya" : "Supervisor") +
+                ": " +
+                i.state +
+                (i.last_ok
+                  ? " · respuesta válida " + local(i.last_ok, true)
+                  : " · sin respuesta válida"),
+            )
+            .join(" | ") + (live && !recent(laya) ? " | Laya aún sin confirmación reciente" : "")
+        return { state, label, detail }
+      }
       function connections(s) {
+        const badge = teacherConnection(s.teacher)
+        set("teacherBadge", badge.label)
+        el("teacherBadge").setAttribute("data-state", badge.state)
+        el("teacherBadge").title = badge.detail
         const root = el("connections")
         root.replaceChildren()
         const names = {
@@ -1286,6 +1589,17 @@
                 (yahoo.status?.detail ?? "")
             : (yahoo?.status?.detail ?? "Esperando historial"),
         )
+        const regression = history?.price_regression
+        set(
+          "yahooRegression",
+          regression
+            ? "Cierre en USD · MAE histórico " +
+                money(regression.test.mae_usd) +
+                " / mantener último cierre " +
+                money(regression.last_price_baseline.mae_usd) +
+                ". Experimental, sin ventaja operativa demostrada."
+            : "Regresor en USD pendiente de entrenamiento.",
+        )
         const yahooMetrics = el("yahooMetrics")
         yahooMetrics.replaceChildren()
         for (const item of yahoo?.metrics ?? []) {
@@ -1345,7 +1659,10 @@
           const box = node("div")
           box.append(
             node("h3", result.source + " · " + result.n + " resultados"),
-            node("p", "Acierto Laya " + pct(result.accuracy) + " / libro " + pct(result.book_accuracy)),
+            node(
+              "p",
+              "Acierto Laya " + pct(result.accuracy) + " / libro " + pct(result.book_accuracy),
+            ),
             node(
               "small",
               "Brier Laya " +
@@ -1374,7 +1691,9 @@
         set(
           "observerStatus",
           (obs?.detail ?? "Iniciando supervisión") +
-            (note ? " · Informe de " + note.model + " · " + local(note.at) + " · " + note.level : ""),
+            (note
+              ? " · Informe de " + note.model + " · " + local(note.at) + " · " + note.level
+              : ""),
         )
         flowMap.update(s)
       }
@@ -1401,6 +1720,8 @@
           if (request === seq) {
             set("health", "Conexión con el agente interrumpida")
             el("health").className = "bad"
+            set("teacherBadge", "API del profesor · estado no disponible")
+            el("teacherBadge").setAttribute("data-state", "waiting")
           }
         }
       }

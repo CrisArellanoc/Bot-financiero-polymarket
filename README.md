@@ -14,13 +14,27 @@ Abre [el monitor local](http://127.0.0.1:8765). Déjalo corriendo para acumular 
 
 ### Red de comunicación del monitor
 
-La terminal organiza el mercado, la decisión simulada, la evaluación de modelos y la verificación del supervisor. El diagrama muestra módulos de adquisición, predicción, riesgo y cartera. Al recibir una cotización o un mensaje nuevo, ilumina su recorrido. Selecciona un nodo para filtrar sus mensajes o un mensaje para consultar su contenido.
+La terminal organiza el mercado, la decisión simulada, la evaluación de modelos y la verificación del supervisor. Cada nodo tiene soma, núcleo y ramificaciones y representa un módulo de adquisición, predicción, riesgo o cartera. Los impulsos representan mensajes registrados, no activaciones internas de una red neuronal. Al recibir una cotización o un mensaje nuevo, ilumina su recorrido. Selecciona un nodo para filtrar sus mensajes o un mensaje para consultar su contenido.
 
 `Reproducir eventos` recorre el registro del intervalo seleccionado y lo identifica como reproducción. Los informes del supervisor aparecen como entregas a la interfaz. La visualización respeta movimiento reducido y detiene la reproducción al esconder la pestaña. Estas interacciones consultan los datos ya registrados.
+
+### Gráfica BTC en dólares y precio a superar
+
+La vista principal compara tres líneas en USD. La referencia horizontal gris es `openPrice` publicado por Polymarket para el intervalo UTC exacto. Se consulta `https://polymarket.com/api/crypto/crypto-price` con `symbol=BTC`, `eventStartTime`, `endDate` y `variant=fiveminute`. Es un endpoint de su sitio web, sin contrato público de estabilidad. Se conserva el primer valor válido junto con la hora de recepción. Si falta o falla, la interfaz informa que está pendiente.
+
+La curva naranja usa la cotización BTC-USD de Yahoo, consultada aproximadamente cada diez segundos. Muestra la hora de la fuente y avisa de cotizaciones antiguas. No replica exactamente Chainlink. El flujo de referencia de Chainlink en Polymarket requiere credenciales CLOB y una clave adicional de Chainlink según la [documentación oficial de PolyBolt](https://docs.polymarket.com/migrate/rtds-to-polybolt.md). Esta versión utiliza solo fuentes públicas, sin autenticar operaciones.
+
+La línea morada es una estimación fija del cierre BTC-USD producida por un segundo MLP de regresión de 16 y 8 neuronas, independiente del clasificador Up/Down. Predice el retorno logarítmico desde el último cierre Yahoo admitido hasta el cierre objetivo. La base es conocida cinco minutos antes de abrir y el horizonte total desde esa base es de diez minutos. La predicción se congela en los primeros 15 segundos y se dibuja desde su emisión hasta el cierre, sin inventar una trayectoria futura. Usa los mismos datos temporales y controles de disponibilidad que el clasificador. La probabilidad Up no se convierte en dólares. Las probabilidades del contrato, Laya y el clasificador Yahoo se conservan en un panel desplegable con escala porcentual.
+
+Ejecuta `yahoo_predictor.py` una vez para añadir el regresor a una instalación con pesos antiguos, reinicia `live_paper.py` y espera una nueva apertura válida. Los intervalos anteriores no se rellenan con predicciones retrospectivas. El sondeo y las gráficas no reentrenan el modelo en cada actualización.
+
+En el entrenamiento del 24 de noviembre de 2026, sobre 3,448 velas históricas de prueba, el regresor obtuvo MAE de 126.41 USD frente a 126.49 USD de mantener el último cierre conocido. La diferencia es mínima y no demuestra una ventaja operativa. La predicción en USD sigue siendo experimental y no modifica las reglas de compra.
 
 ### Dos modelos en el servidor
 
 El modo predeterminado usa dos conexiones HTTPS independientes. Laya recibe las cinco variables congeladas al abrir el mercado, devuelve una puntuación Up experimental y deja constancia de cuándo estuvo disponible. El supervisor revisa los eventos del bot, incluida la predicción de Laya. Comprueba actividad cada pocos segundos y recibe un control periódico de cotización y actividad aproximadamente cada minuto mientras el proceso está funcionando. Selecciona los hechos relevantes y marca observación o atención. Las reglas deterministas y la cartera siguen gobernando las compras simuladas.
+
+El encabezado incluye una viñeta discreta «API del profesor». Se confirma con una respuesta del supervisor remoto validada durante esta ejecución. Verde significa confirmación reciente, ámbar una incidencia y gris ausencia de confirmación reciente. Al pasar el cursor muestra el estado y la hora de la última respuesta válida de cada módulo. La confirmación del supervisor caduca a los 120 segundos, la de Laya a los 360 segundos porque solo se consulta una vez por intervalo. Se conserva el último éxito al fallar y se exige una respuesta nueva después de reiniciar. Un modelo local no enciende esta confirmación. La viñeta comprueba respuestas recibidas, no garantiza disponibilidad futura ni valida la eficacia predictiva.
 
 ### Predictor histórico de Yahoo Finance
 
@@ -34,7 +48,7 @@ Para descargar hasta 60 días, auditar los datos y entrenarlo, ejecuta desde la 
 
 Reutiliza las dependencias de entrenamiento de `requirements-lock.txt`. La descarga y la inferencia en vivo usan la biblioteca estándar. El ajuste se ejecuta una vez en un proceso independiente y limita el cálculo numérico a un hilo. Guarda pesos, reporte y pronósticos en `data/live_paper.sqlite` y conserva la captura original de Yahoo dentro de `data/`, excluida de Git.
 
-Reinicia `live_paper.py` después de actualizar el código. El bot actualiza las velas completas una vez por minuto, calcula el pronóstico al abrir cada mercado y muestra una línea morada junto al precio del contrato y a Laya. Solo utiliza entradas recibidas antes de la apertura y una versión del modelo que ya existiera en ese instante. Ante huecos, datos tardíos o un modelo de más de siete días, registra una abstención. Repite el comando de entrenamiento para actualizar el modelo.
+Reinicia `live_paper.py` después de actualizar el código. El bot consulta las velas completas y la cotización Yahoo aproximadamente cada diez segundos, calcula el pronóstico al abrir cada mercado y muestra una línea morada junto al precio del contrato y a Laya. Solo utiliza entradas recibidas antes de la apertura y una versión del modelo que ya existiera en ese instante. Ante huecos, datos tardíos o un modelo de más de siete días, registra una abstención. Repite el comando de entrenamiento para actualizar el modelo.
 
 El entrenamiento usa un corte temporal fijo de 60% para ajustar, 20% para calibrar probabilidades y 20% para evaluar. La etiqueta histórica es cierre mayor o igual a apertura de la vela Yahoo. El informe conserva acierto, Brier y referencias de mayoría y persistencia. La disponibilidad histórica es una hipótesis basada en velas cerradas y el margen temporal, pues el historial descargado no demuestra su fecha original de publicación.
 

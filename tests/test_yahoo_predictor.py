@@ -103,5 +103,11 @@ class YahooTests(unittest.TestCase):
                 with patch("yahoo_predictor.time.time",return_value=start+2):
                     yahoo.forecast(agent.db,start)
                 self.assertIsNone(agent.db.execute("SELECT p FROM yahoo_predictions").fetchone()[0])
+                with agent.db:
+                    agent.db.execute("DELETE FROM yahoo_predictions")
+                    agent.db.execute("UPDATE yahoo_models SET ready=?",(start-100,))
+                with patch("yahoo_predictor.time.time",return_value=start-1):
+                    yahoo.forecast(agent.db,start)
+                self.assertIsNone(agent.db.execute("SELECT p FROM yahoo_predictions").fetchone()[0])
             finally:
                 agent.ledger.close()

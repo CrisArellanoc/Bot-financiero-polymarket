@@ -4,7 +4,7 @@ const path = require("node:path")
 const { test } = require("node:test")
 const vm = require("node:vm")
 
-function chartFixture(reducedMotion = false) {
+function chartFixture(reducedMotion = false, usd = false) {
   class Element {
     constructor() { this.attributes = {}; this.children = []; this.style = {}; this.listeners = {};
       this.classList={toggle(){},remove(){},add(){}} }
@@ -30,7 +30,7 @@ function chartFixture(reducedMotion = false) {
   const start = html.indexOf("class MarketChart")
   const end = html.indexOf("const el =",start)
   const {Chart,Flow} = vm.runInNewContext(html.slice(start,end)+"; ({Chart:MarketChart,Flow:FlowMap})",sandbox)
-  return {chart:new Chart(new Element()),flow:()=>new Flow(new Element()),frames,document,el,listeners,timeouts,
+  return {chart:new Chart(new Element(),usd),flow:()=>new Flow(new Element()),frames,document,el,listeners,timeouts,
     step(now) { const callbacks=[...frames.values()];frames.clear();callbacks.forEach(cb=>cb(now)) }}
 }
 const state = (prices,focus=3000) => ({focus,current:focus,prices,laya:{ready:focus+12,p:.65}})
@@ -110,4 +110,34 @@ test("Movimiento reducido, pestaña oculta y múltiples muestras evitan la anima
     f.chart.update(state(rows))
     assert.equal(f.frames.size,0)
   }
+})
+
+
+test("BTC usa dólares, referencia exacta y predicción fija solo desde su emisión",()=>{
+  const {chart}=chartFixture(true,true)
+  chart.update({focus:3000,current:3000,btc:{target:{price:60000},
+    quotes:[{ts:3002,price:59990},{ts:3012,price:60010}],forecast:{ready:3005,price:60020}}})
+  assert.equal(chart.targetLine.style.display,"")
+  const targetY=Number(chart.targetLine.attributes.y1)
+  const priceY=chart.line.attributes.d.match(/[\d.]+/g).map(Number)[1]
+  assert.ok(targetY<priceY)
+  assert.ok(!chart.line.attributes.d.includes("NaN"))
+  const forecast=chart.prediction.attributes.d.match(/[\d.]+/g).map(Number)
+  assert.equal(forecast[0],10+(551-10)*5/300)
+  assert.equal(forecast[2],551)
+  assert.equal(forecast[1],forecast[3])
+  chart.update({focus:3300,current:3300,btc:{quotes:[]}})
+  assert.equal(chart.targetLine.style.display,"none")
+  assert.equal(chart.prediction.attributes.d,"")
+})
+
+test("El indicador remoto distingue respuesta válida, pérdida de conexión y estado vencido",()=>{
+  const html=readFileSync(path.join(__dirname,"../monitor.html"),"utf8")
+  const start=html.indexOf("function teacherConnection("),end=html.indexOf("function connections(",start)
+  const badge=vm.runInNewContext(html.slice(start,end)+";teacherConnection",{Date,local:String})
+  assert.equal(badge([],3000).state,"waiting")
+  assert.equal(badge([{service:"supervisor",state:"busy",at:3000,last_ok:2990}],3000).state,"ok")
+  assert.equal(badge([{service:"supervisor",state:"ok",at:3000,last_ok:2990}],3200).state,"waiting")
+  assert.equal(badge([{service:"supervisor",state:"error",at:3000,last_ok:2990}],3001).state,"error")
+  assert.equal(badge([{service:"laya",state:"ok",at:3000,last_ok:2990}],3001).state,"waiting")
 })

@@ -19,6 +19,7 @@ import local_observer
 import laya_shadow
 import service_status
 import yahoo_predictor
+import btc_reference
 from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
 from settings import load_settings
 from autonomy import Limits, PaperLedger, number
@@ -354,6 +355,11 @@ def snapshot(path, selected=None):
             yahoo_model[0]["report"] = json.loads(yahoo_model[0]["report"])
         yahoo_forecast = rows("SELECT start,ready,p,model,detail FROM yahoo_predictions WHERE start=?",(focus,))
         yahoo_status = rows("SELECT at,detail FROM yahoo_status WHERE id=1")
+        btc = dict(target=next(iter(rows("SELECT seen,price,source FROM btc_targets WHERE start=?",(focus,))),None),
+                   quotes=rows("SELECT ts,seen,price,source FROM btc_quotes WHERE ts>=? AND ts<? ORDER BY ts",(focus,focus+300)),
+                   forecast=next(iter(rows("SELECT ready,price,anchor,model,detail FROM yahoo_price_predictions WHERE start=?",(focus,))),None),
+                   status=next(iter(rows("SELECT at,detail FROM btc_target_status WHERE id=1")),None))
+        teacher = rows("SELECT service,state,at,last_ok FROM teacher_connections ORDER BY service")
         yahoo_metrics = rows("""SELECT y.model,count(*) AS n,avg((y.p>=0.5)=(f.winner='Up')) AS accuracy,
             avg((y.p-(f.winner='Up'))*(y.p-(f.winner='Up'))) AS brier,
             avg((json_extract(f.x,'$[0]')>=0.5)=(f.winner='Up')) AS book_accuracy
@@ -375,7 +381,7 @@ def snapshot(path, selected=None):
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
                     yahoo=dict(model=next(iter(yahoo_model),None),forecast=next(iter(yahoo_forecast),None),
                                status=next(iter(yahoo_status),None),metrics=yahoo_metrics),
-                    services=services,comparison_by_source=by_source,mode="paper",
+                    services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
                     prices=prices,laya=next(iter(prediction),None),comparison=comparison,
                     laya_status=state[0] if state else "Esperando inicio",
                     observer=next(iter(observer), None), notes=notes,
@@ -469,6 +475,7 @@ def serve(args, config):
             service_status.record(agent.db, "supervisor", "unconfigured", str(exc))
     Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
     Thread(target=yahoo_predictor.collect,args=(args.db,stop),daemon=True).start()
+    Thread(target=btc_reference.collect,args=(args.db,stop),daemon=True).start()
     try:
         predictor = None if args.laya_local else RemoteLaya.from_env(config)
         Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop,predictor), daemon=True).start()

@@ -137,6 +137,8 @@ def next_evidence(db, now):
 def observe(path, model, stop, remote=None):
     with closing(sqlite3.connect(path, timeout=10)) as db:
         status(db, model, "Esperando actividad")
+        if remote:
+            service_status.teacher(db,"supervisor","waiting")
         delay = 0
         last_check = 0
         while not stop.wait(delay):
@@ -152,6 +154,8 @@ def observe(path, model, stop, remote=None):
                 start, through, evidence = pending
                 status(db, model, "Analizando intervalo", "busy")
                 if remote:
+                    service_status.teacher(db,"supervisor","busy")
+                if remote:
                     level, summary = remote.explain(evidence)
                     model = "Remoto · " + remote.name
                 else:
@@ -160,9 +164,13 @@ def observe(path, model, stop, remote=None):
                     db.execute("INSERT OR REPLACE INTO local_notes VALUES(?,?,?,?,?,?,?)",
                                (start, through, time.time(), model, level, summary, REVISION))
                 status(db, model, "Seguimiento activo", "ok", success=True)
+                if remote:
+                    service_status.teacher(db,"supervisor","ok",success=True)
                 delay = 10
             except (URLError, OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
                 status(db, model, f"Reintentará en 30 s · {exc}", "error")
+                if remote:
+                    service_status.teacher(db,"supervisor","error")
                 delay = 30
 
 

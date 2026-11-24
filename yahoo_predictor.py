@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from live_model import sigmoid
+import btc_reference
 
 LAGS = 24
 FEATURES = [f"return_{i}" for i in range(LAGS)] + ["mean_6", "volatility_24", "range_last", "volume_ratio"]
@@ -122,7 +123,7 @@ def measurements(pairs):
 
 def train(rows):
     from sklearn.linear_model import LogisticRegression
-    from sklearn.neural_network import MLPClassifier
+    from sklearn.neural_network import MLPClassifier, MLPRegressor
     from sklearn.preprocessing import StandardScaler
     from threadpoolctl import threadpool_limits
 
@@ -144,6 +145,26 @@ def train(rows):
         calibrator = LogisticRegression(random_state=123).fit(
             [[score(weights,r[1])] for r in calibration],[r[2] for r in calibration])
     weights.update(a=float(calibrator.coef_[0,0]),b=float(calibrator.intercept_[0]))
+    # Regresión de precio independiente de la probabilidad Up. La base es el
+    # último cierre de entrada, conocido 5 minutos antes de abrir el mercado.
+    by_time = {r["start"]:r for r in rows}
+    returns = lambda part: [math.log(by_time[t]["close"]/by_time[t-600]["close"]) for t,_,_ in part]
+    target_scale = statistics.pstdev(returns(training)) or 1.
+    with threadpool_limits(limits=1):
+        reg = MLPRegressor(hidden_layer_sizes=(16,8),activation="tanh",alpha=3,
+                           max_iter=120,shuffle=False,batch_size=128,random_state=123)
+        reg.fit(scaler.transform([r[1] for r in training]),[v/target_scale for v in returns(training)])
+    price_model = {"mean":weights["mean"],"scale":weights["scale"],"target_scale":target_scale,
+                   "layers":[{"weights":w.tolist(),"bias":bias.tolist()}
+                             for w,bias in zip(reg.coefs_,reg.intercepts_,strict=True)]}
+    weights["price_model"] = price_model
+    errors, baseline = [],[]
+    for t,x,_ in test:
+        anchor,actual = by_time[t-600]["close"],by_time[t]["close"]
+        errors.append(price_prediction(price_model,x,anchor)-actual)
+        baseline.append(anchor-actual)
+    price_metrics = lambda values: dict(mae_usd=statistics.mean(abs(v) for v in values),
+                                        rmse_usd=math.sqrt(statistics.mean(v*v for v in values)))
     prior = statistics.mean(r[2] for r in training)
     report = {"target":TARGET,"features":FEATURES,"lookback_bars":LAGS,"gap_bars":1,
               "architecture":[len(FEATURES),16,8,1],"iterations":int(net.n_iter_),
@@ -152,12 +173,17 @@ def train(rows):
               "test":measurements([(probability(weights,x),y) for _,x,y in test]),
               "majority":measurements([(prior,y) for _,_,y in test]),
               "persistence":measurements([(float(x[LAGS-1]>=0),y) for _,x,y in test]),
+              "price_regression":{"target":"log(target close / last input close)","anchor_lag_seconds":300,
+                                  "horizon_from_anchor_seconds":600,"test_n":len(test),
+                                  "test":price_metrics(errors),"last_price_baseline":price_metrics(baseline),
+                                  "iterations":int(reg.n_iter_),"source":"Yahoo BTC-USD, not Chainlink"},
               "historical_availability":"closed candles with one-bar gap; publication times not proven",
               "real_money_enabled":False,"paper_trading_approved":False}
     return weights,report
 
 
 def tables(db):
+    btc_reference.tables(db)
     db.executescript("""
         CREATE TABLE IF NOT EXISTS yahoo_candles(
             start INTEGER PRIMARY KEY, open REAL, high REAL, low REAL, close REAL, volume REAL, available REAL);
@@ -197,7 +223,7 @@ def forecast(db, start):
     now = time.time()
     p,x,available = None,None,None
     try:
-        if now-start > 15 or model[1] > start:
+        if not start <= now <= start+15 or model[1] > start:
             raise ValueError("La apertura ocurrió antes de disponer de los datos o del modelo")
         records = db.execute("""SELECT start,open,high,low,close,volume,available FROM yahoo_candles
             WHERE start>=? AND start<=? ORDER BY start""", (start-(LAGS+1)*300,start-600)).fetchall()
@@ -208,19 +234,54 @@ def forecast(db, start):
             raise ValueError("Las entradas Yahoo se observaron después de la apertura")
         if start-model[1] > 7*86400:
             raise ValueError("Modelo Yahoo de más de siete días. Repite el entrenamiento")
-        p = probability(json.loads(model[2]),x)
+        weights = json.loads(model[2])
+        p = probability(weights,x)
         detail = "Predicción experimental de apertura"
     except ValueError as exc:
         detail = str(exc)
+    price,anchor,price_detail = None,None,"Estimación USD no disponible"
+    if p is not None and weights.get("price_model"):
+        anchor = window[-1]["close"]
+        try:
+            price = price_prediction(weights["price_model"],x,anchor)
+            price_detail = "Estimación experimental del cierre Yahoo BTC-USD"
+        except ValueError as exc:
+            price_detail = str(exc)
     with db:
         db.execute("INSERT INTO yahoo_predictions VALUES(?,?,?,?,?,?,?)",
                    (start,now,p,model[0],json.dumps(x),available,detail))
+        if p is not None and weights.get("price_model"):
+            db.execute("INSERT OR IGNORE INTO yahoo_price_predictions VALUES(?,?,?,?,?,?)",
+                       (start,now,price,anchor,model[0],price_detail))
         if p is not None:
             db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
                        (start,now,"Yahoo","Yahoo MLP","Ventana Yahoo congelada",json.dumps({"entradas_disponibles":available})))
         db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
                    (start,now,"Yahoo MLP","Supervisor",detail,
                     json.dumps({"p_up":p,"modelo":model[0],"entradas_disponibles":available},allow_nan=False)))
+
+
+def price_prediction(weights, x, anchor):
+    change = score(weights,x)*weights["target_scale"]
+    if not math.isfinite(change) or abs(change) > .1 or not math.isfinite(anchor) or anchor <= 0:
+        raise ValueError("Estimación de precio fuera del rango admitido")
+    return anchor*math.exp(change)
+
+
+def store_quote(db, payload, observed):
+    try:
+        meta = payload["chart"]["result"][0]["meta"]
+        ts,price = float(meta["regularMarketTime"]),float(meta["regularMarketPrice"])
+        if meta["symbol"] != "BTC-USD" or not all(math.isfinite(v) for v in (ts,price)) or price <= 0:
+            raise ValueError()
+        if not observed-180 <= ts <= observed+10:
+            raise ValueError()
+    except (KeyError,TypeError,ValueError,IndexError):
+        return False
+    with db:
+        db.execute("INSERT OR IGNORE INTO btc_quotes VALUES(?,?,?,?)",(ts,observed,price,"Yahoo Finance BTC-USD"))
+        db.execute("DELETE FROM btc_quotes WHERE ts<?",(observed-2*86400,))
+    return True
 
 
 def collect(path, stop):
@@ -233,10 +294,11 @@ def collect(path, stop):
                 if not rows:
                     raise ValueError("Yahoo no devolvió velas completas")
                 store_candles(db,rows,now)
-                status(db,"Velas BTC-USD actualizadas")
+                fresh = store_quote(db,payload,now)
+                status(db,"Velas BTC-USD actualizadas" + (" · cotización Yahoo recibida" if fresh else " · cotización actual pendiente"))
             except (ValueError,OSError,KeyError,TypeError) as exc:
                 status(db,f"Actualización pendiente · {exc}")
-            stop.wait(60)
+            stop.wait(10)
 
 
 def main():

@@ -56,6 +56,8 @@ class RemoteWorkerTests(unittest.TestCase):
                 statuses = {item["service"]:item for item in data["services"]}
                 self.assertEqual(statuses["supervisor"]["state"],"ok")
                 self.assertEqual(statuses["laya"]["last_ok"],3002)
+                self.assertEqual({r["service"]:r["last_ok"] for r in data["teacher"]},
+                                 {"laya":3002,"supervisor":3004})
             finally:
                 agent.ledger.close()
 

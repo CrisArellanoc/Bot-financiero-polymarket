@@ -42,6 +42,8 @@ def run(path, directory, stop, remote=None):
             with db:
                 db.execute("INSERT OR REPLACE INTO laya_status VALUES(1,?)", (detail,))
             service_status.record(db, "laya", state, detail, success)
+            if remote is not None:
+                service_status.teacher(db,"laya",state,success)
         try:
             if remote is None:
                 status("Cargando pesos en CPU", "busy")
