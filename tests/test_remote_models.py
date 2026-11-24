@@ -42,6 +42,9 @@ class RemoteClientsTests(unittest.TestCase):
         url, auth, payload = self.calls[-1]
         self.assertEqual((url, auth), (self.settings["SUPERVISOR_API_URL"], "Bearer shared-test-token"))
         self.assertEqual(payload["model"], "watcher")
+        schema = payload["response_format"]["json_schema"]["schema"]
+        self.assertEqual(schema["properties"]["principal"]["enum"], ["E0"])
+        self.assertEqual(schema["properties"]["estado"]["enum"], ["observacion","atencion"])
         self.assertNotIn("shared-test-token", str(payload))
 
     def test_chat_laya_uses_explicit_model_and_checks_score(self):
@@ -81,6 +84,21 @@ class RemoteClientsTests(unittest.TestCase):
         with self.assertRaisesRegex(remote.RemoteModelError, "MODEL_CA_FILE"):
             remote.RemoteLaya.from_env({**self.settings, "MODEL_CA_FILE": "missing-ca-remote-models-test.pem"})
 
+    def test_independent_timeouts_and_sanitized_timeout_error(self):
+        self.assertEqual(remote.RemoteLaya.from_env(self.settings).endpoint.timeout,90)
+        self.assertEqual(remote.RemoteSupervisor.from_env(self.settings).endpoint.timeout,30)
+        client = remote.RemoteLaya.from_env({**self.settings,"LAYA_TIMEOUT_SECONDS":"120"})
+        with patch.object(remote,"build_opener") as mocked:
+            for exc in (TimeoutError("private error"),URLError(TimeoutError("private error"))):
+                mocked.return_value.open.side_effect=exc
+                with self.assertRaisesRegex(remote.RemoteModelError,"120 s") as error:
+                    client.predict(self.values)
+                self.assertNotIn("private",str(error.exception))
+                self.assertEqual(mocked.return_value.open.call_args.kwargs["timeout"],120)
+        for value in ("NaN","inf","0","241","private invalid"):
+            with self.subTest(value=value),self.assertRaisesRegex(remote.RemoteModelError,"LAYA_TIMEOUT_SECONDS"):
+                remote.RemoteLaya.from_env({**self.settings,"LAYA_TIMEOUT_SECONDS":value})
+
     def test_auth_and_transport_errors_are_safe(self):
         with patch.object(remote, "build_opener") as opener:
             opener.return_value.open.side_effect = HTTPError(
@@ -99,6 +117,19 @@ class RemoteClientsTests(unittest.TestCase):
         note = json.dumps({"estado": "atencion", "principal": "E91", "secundario": "ninguno"})
         with self.respond({"choices": [{"message": {"content": note}}]}), self.assertRaises(remote.RemoteModelError):
             remote.RemoteSupervisor.from_env(self.settings).explain(self.events)
+
+    def test_supervisor_accepts_fenced_json_but_rejects_incomplete_and_unobserved_content(self):
+        note = '{"estado":"observacion","principal":"E0","secundario":"ninguno"}'
+        supervisor = remote.RemoteSupervisor.from_env(self.settings)
+        for content in (note, "```json\n"+note+"\n```", "\n```\n"+note+"\n```\n"):
+            with self.respond({"choices":[{"finish_reason":"stop","message":{"content":content}}]}):
+                self.assertEqual(supervisor.explain(self.events),("observacion","Mercado abierto."))
+        for content in ("```json\n"+note, "Explicación\n"+note, "```json\n"+note+"\n```\nTexto"):
+            with self.respond({"choices":[{"message":{"content":content}}]}), self.assertRaises(remote.RemoteModelError):
+                supervisor.explain(self.events)
+        with self.respond({"choices":[{"finish_reason":"length","message":{"content":note}}]}), \
+             self.assertRaisesRegex(remote.RemoteModelError,"límite"):
+            supervisor.explain(self.events)
 
     def test_certificate_failure_has_distinct_sanitized_diagnostic(self):
         with patch.object(remote, "build_opener") as mock:

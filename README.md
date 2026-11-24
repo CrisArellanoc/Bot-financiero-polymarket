@@ -38,6 +38,10 @@ En `MODEL_API_KEY` pega la clave de acceso del workspace. Si las credenciales so
 
 Si Windows o Python indican que la autoridad certificadora del servidor es desconocida, solicita al administrador el certificado público de su CA en formato PEM y guarda la ruta absoluta en `MODEL_CA_FILE`. Este archivo permite verificar la identidad del servidor al enviar la clave. La prueba autenticada quedará pendiente hasta completar la clave y la confianza TLS.
 
+El supervisor solicita una respuesta JSON con las opciones del monitor. El cliente también admite un único bloque Markdown de JSON y verifica que las referencias pertenezcan a los eventos enviados. Una respuesta cortada por el límite de generación aparece como error explícito.
+
+Cada servicio tiene su tiempo de espera. `LAYA_TIMEOUT_SECONDS` vale 90 segundos por defecto y `SUPERVISOR_TIMEOUT_SECONDS` vale 30. Puedes ajustarlos entre 1 y 240 en `.env`. La espera adicional de Laya permite una carga inicial lenta en el servidor y conserva la hora real de recepción de la predicción.
+
 Con la red privada o VPN conectada, prueba ambas rutas. Esta comprobación envía dos peticiones de inferencia con datos de ejemplo y muestra el estado por servicio. Después inicia el proceso y abre [el panel](http://127.0.0.1:8765). Reinicia el proceso tras editar las variables.
 
 ```powershell

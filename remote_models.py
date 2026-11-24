@@ -25,6 +25,7 @@ class _Endpoint:
     key: str = field(repr=False)
     model: str
     context: ssl.SSLContext | None = field(default=None, repr=False)
+    timeout: float = 30
 
     @classmethod
     def from_settings(cls, settings, prefix, require_model=True):
@@ -45,6 +46,12 @@ class _Endpoint:
             raise RemoteModelError(f"Configura {prefix}_API_KEY o MODEL_API_KEY con el token Bearer")
         if require_model and not model:
             raise RemoteModelError(f"Configura {prefix}_MODEL con el identificador del proveedor")
+        try:
+            timeout = float(settings.get(prefix + "_TIMEOUT_SECONDS", 90 if prefix == "LAYA" else 30))
+            if not math.isfinite(timeout) or not 1 <= timeout <= 240:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise RemoteModelError(f"{prefix}_TIMEOUT_SECONDS debe estar entre 1 y 240 segundos") from None
         ca_file = settings.get("MODEL_CA_FILE", "").strip()
         context = None
         if ca_file:
@@ -53,7 +60,7 @@ class _Endpoint:
                 context.load_verify_locations(cafile=ca_file)
             except (OSError, ValueError):
                 raise RemoteModelError("MODEL_CA_FILE debe apuntar a un certificado CA PEM legible") from None
-        return cls(url, key, model, context)
+        return cls(url, key, model, context, timeout)
 
     def request(self, url, payload=None):
         try:
@@ -61,17 +68,21 @@ class _Endpoint:
             request = Request(url, data=data,
                               headers={"Authorization": "Bearer " + self.key,
                                        "Content-Type": "application/json", "Accept": "application/json"})
-            with build_opener(_NoRedirect(), HTTPSHandler(context=self.context)).open(request, timeout=30) as response:
+            with build_opener(_NoRedirect(), HTTPSHandler(context=self.context)).open(request, timeout=self.timeout) as response:
                 raw = response.read(65537)
         except HTTPError as exc:
             status = exc.code
             exc.close()
             raise RemoteModelError(f"El servidor de inferencia respondió HTTP {status}") from None
         except (URLError, ssl.SSLCertVerificationError) as exc:
+            if isinstance(getattr(exc, "reason", exc), TimeoutError):
+                raise RemoteModelError(f"El servidor agotó el tiempo de espera de {self.timeout:g} s") from None
             if isinstance(getattr(exc, "reason", exc), ssl.SSLCertVerificationError):
                 raise RemoteModelError("No se pudo verificar el certificado TLS: comprueba el nombre del "
                                        "servidor y la CA de confianza (MODEL_CA_FILE)") from None
-            raise RemoteModelError("Falló la conexión HTTPS con el servidor de inferencia") from None
+            raise RemoteModelError("Servidor de inferencia inaccesible. Comprueba la red local o VPN y la URL") from None
+        except TimeoutError:
+            raise RemoteModelError(f"El servidor agotó el tiempo de espera de {self.timeout:g} s") from None
         except (OSError, ValueError, HTTPException):
             raise RemoteModelError("Falló la conexión HTTPS con el servidor de inferencia") from None
         if len(raw) > 65536:
@@ -97,18 +108,32 @@ class _Endpoint:
                 return first
         raise RemoteModelError("El catálogo remoto no devolvió un identificador de modelo")
 
-    def chat(self, instruction, evidence):
-        response = self.request(self.url, {"model": self.model, "stream": False,
+    def chat(self, instruction, evidence, schema=None):
+        payload = {"model": self.model, "stream": False,
                               "temperature": 0, "max_tokens": 192,
                               "messages": [{"role": "system", "content": instruction},
-                                           {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]})
+                                           {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]}
+        if schema is not None:
+            payload["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "supervision", "strict": True, "schema": schema}}
+        response = self.request(self.url, payload)
         try:
             choice = response["choices"][0]
+            if choice.get("finish_reason") == "length":
+                raise RemoteModelError("El modelo agotó el límite de generación antes de completar el JSON")
             if choice.get("finish_reason") not in (None, "stop"):
                 raise ValueError()
-            value = json.loads(choice["message"]["content"])
+            content = choice["message"]["content"].strip()
+            if content.startswith("```"):
+                lines = content.splitlines()
+                if len(lines) < 3 or lines[0].strip().lower() not in ("```", "```json") or lines[-1].strip() != "```":
+                    raise ValueError()
+                content = "\n".join(lines[1:-1])
+            value = json.loads(content)
             if not isinstance(value, dict):
                 raise ValueError()
+        except RemoteModelError:
+            raise
         except (ValueError, KeyError, TypeError, AttributeError, IndexError, RecursionError):
             raise RemoteModelError("Chat remoto sin respuesta JSON válida y completa") from None
         return value
@@ -159,13 +184,13 @@ class RemoteSupervisor:
         return cls(_Endpoint.from_settings(settings, "SUPERVISOR", require_model=False))
 
     def explain(self, evidence):
-        from local_observer import INSTRUCTIONS, validate_note
+        from local_observer import INSTRUCTIONS, validate_note, note_schema
         if not self.endpoint.model:
             model = self.endpoint.discover_model()
             self.endpoint = replace(self.endpoint, model=model)
             self.name = model
         instruction = INSTRUCTIONS + ' Devuelve solo JSON con los campos "estado", "principal" y "secundario".'
-        note = self.endpoint.chat(instruction, evidence)
+        note = self.endpoint.chat(instruction, evidence, note_schema(evidence))
         try:
             return validate_note(note, evidence)
         except (ValueError, KeyError, TypeError):

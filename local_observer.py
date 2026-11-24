@@ -48,17 +48,19 @@ def select_model(requested):
     return requested
 
 
+def note_schema(evidence):
+    refs = [f"E{i}" for i in range(len(evidence["mensajes"]))]
+    return {"type": "object", "properties": {
+        "estado": {"type": "string", "enum": list(LEVELS)},
+        "principal": {"type": "string", "enum": refs},
+        "secundario": {"type": "string", "enum": ["ninguno", *refs]}},
+        "required": ["estado", "principal", "secundario"], "additionalProperties": False}
+
+
 def explain(model, evidence):
     # Se vuelve a verificar el alias antes de cada inferencia.
     select_model(model)
-    events = evidence["mensajes"]
-    refs = {f"E{i}": event["hecho"] for i, event in enumerate(events)}
-    schema = {"type": "object", "properties": {
-        "estado": {"type": "string", "enum": list(LEVELS)},
-        "principal": {"type": "string", "enum": list(refs)},
-        "secundario": {"type": "string", "enum": ["ninguno", *refs]}},
-        "required": ["estado", "principal", "secundario"], "additionalProperties": False}
-    body = {"model": model, "stream": False, "think": False, "format": schema,
+    body = {"model": model, "stream": False, "think": False, "format": note_schema(evidence),
             "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 90, "num_thread": 3},
             "messages": [{"role": "system", "content": INSTRUCTIONS},
                          {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]}
