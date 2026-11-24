@@ -4,18 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>BTC 5m · Monitor de simulación</title>
+
     <style>
       :root {
         color-scheme: dark;
-        --bg: #10151b;
-        --panel: #172129;
-        --ink: #eff6f6;
-        --muted: #afbec4;
-        --line: #35464f;
-        --mint: #6fe2bb;
-        --amber: #f2c87d;
+        --bg: #0c1016;
+        --panel: #111720;
+        --ink: #e7edf4;
+        --muted: #8e9cae;
+        --line: #273141;
+        --mint: #82c8ad;
+        --amber: #e5b66a;
         font:
-          16px/1.5 "Inter",
+          16px/1.5 Inter,
           "Segoe UI",
           sans-serif;
       }
@@ -28,9 +29,35 @@
         color: var(--ink);
       }
       main {
-        max-width: 1190px;
+        max-width: 1480px;
         margin: auto;
-        padding: 32px clamp(16px, 4vw, 56px) 60px;
+        padding: 25px 36px 44px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 1.8rem;
+        letter-spacing: -0.045em;
+        font-weight: 600;
+      }
+      h2 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+      }
+      h3 {
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+      small,
+      label,
+      .muted {
+        font-size: 0.875rem;
+        color: var(--muted);
       }
       header,
       .bar,
@@ -40,120 +67,152 @@
         display: flex;
         align-items: center;
         gap: 16px;
-        flex-wrap: wrap;
       }
       header,
       .bar {
         justify-content: space-between;
+        flex-wrap: wrap;
       }
       header {
-        padding-bottom: 22px;
+        padding-bottom: 20px;
         border-bottom: 1px solid var(--line);
       }
-      h1,
-      h2,
-      h3,
-      p {
-        margin: 0;
-      }
-      h1 {
-        font-size: clamp(1.7rem, 4vw, 2.5rem);
-        letter-spacing: -0.04em;
-      }
-      h2 {
-        font-size: 1.2rem;
-      }
-      h3 {
-        font-size: 1rem;
-      }
-      small,
-      label,
-      .muted {
+      .brand {
+        font-size: 0.75rem;
+        letter-spacing: 0.16em;
         color: var(--muted);
-      }
-      small,
-      label {
-        font-size: 0.875rem;
-      }
-      section {
-        margin-top: 24px;
+        margin-bottom: 5px;
       }
       .tag {
-        color: var(--mint);
-        border: 1px solid #416456;
-        border-radius: 20px;
-        padding: 4px 12px;
         font-size: 0.875rem;
+        color: var(--mint);
+      }
+      section {
+        margin-top: 20px;
+      }
+      .bar label {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      select,
+      button {
+        font: inherit;
+        color: var(--ink);
+        background: #161f2b;
+        border: 1px solid #344154;
+        border-radius: 5px;
+        padding: 7px 12px;
+      }
+      button {
+        cursor: pointer;
+        font-size: 0.875rem;
+      }
+      button:hover {
+        background: #202c3c;
+      }
+      button:focus-visible,
+      select:focus-visible {
+        outline: 2px solid #94b9ff;
+        outline-offset: 3px;
+      }
+      .connections {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 24px;
+        margin-top: 24px;
+      }
+      .connections article {
+        background: none;
+        border: 0;
+        border-left: 2px solid var(--line);
+        padding: 0 12px;
+        border-radius: 0;
+      }
+      .connections h3 {
+        color: var(--muted);
+      }
+      .connections p {
+        font-size: 0.875rem;
+      }
+      .connections small {
+        display: block;
+        overflow-wrap: anywhere;
+      }
+      .connections .muted {
+        font-size: 0.75rem;
+      }
+      .attention,
+      #health.bad {
+        color: var(--amber);
       }
       .metrics {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
-        gap: 1px;
-        background: var(--line);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        overflow: hidden;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        padding: 17px 0;
       }
-      .metric,
-      article {
-        background: var(--panel);
-        padding: 18px;
+      .metric {
+        padding: 0 18px;
+        border-right: 1px solid var(--line);
       }
-      .connections {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-        gap: 14px;
+      .metric:first-child {
+        padding-left: 0;
       }
-      .attention {
-        color: var(--amber);
+      .metric:last-child {
+        border: 0;
       }
       .metric strong {
         display: block;
-        font:
-          600 1.7rem/1.3 "Barlow",
-          "Segoe UI",
-          sans-serif;
+        font-size: 1.55rem;
+        font-weight: 500;
+        letter-spacing: -0.03em;
         font-variant-numeric: tabular-nums;
       }
       .layout {
         display: grid;
-        grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr);
+        grid-template-columns: minmax(0, 1fr) 310px;
         gap: 18px;
       }
       article,
       .timeline {
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 7px;
+        background: var(--panel);
+        padding: 21px;
       }
-      .bar {
-        row-gap: 8px;
+      .stack > * + * {
+        margin-top: 10px;
       }
-      select {
-        font: inherit;
-        background: #1d2a34;
-        color: var(--ink);
-        border: 1px solid #52646b;
-        border-radius: 6px;
-        padding: 5px 10px;
+      .section-note {
+        font-size: 0.875rem;
+        color: var(--muted);
+        margin-top: 4px;
       }
       svg {
         width: 100%;
         height: auto;
         display: block;
-        margin: 12px 0;
       }
       #chart {
-        height: 280px;
+        height: 300px;
+        margin: 16px 0 5px;
       }
       .chart-values {
         display: flex;
-        gap: 28px;
-        margin-top: 16px;
+        gap: 34px;
         flex-wrap: wrap;
+        margin-top: 20px;
+      }
+      .chart-values small {
+        font-size: 0.8rem;
       }
       .chart-values strong {
         display: block;
-        font-size: 1.6rem;
+        font-size: 1.65rem;
+        font-weight: 500;
+        letter-spacing: -0.04em;
         font-variant-numeric: tabular-nums;
       }
       #marketPrice {
@@ -162,89 +221,231 @@
       #forecastPrice {
         color: #94b9ff;
       }
-      #empty {
-        padding: 18px 0;
+      #yahooPrice {
+        color: #d4a3ff;
+      }
+      .legend {
+        flex-wrap: wrap;
+        gap: 10px 20px;
+      }
+      .legend small {
+        font-size: 0.8rem;
       }
       .legend i {
         display: inline-block;
-        height: 3px;
-        width: 16px;
-        margin-right: 6px;
+        height: 2px;
+        width: 14px;
         vertical-align: middle;
+        margin-right: 7px;
+      }
+      #empty {
+        padding: 20px 0;
+      }
+      #ticks {
+        display: block;
+        margin-top: 9px;
       }
       .signal {
-        font-size: 1.65rem;
-        font-weight: 600;
-        color: var(--mint);
+        font-size: 2rem;
+        font-weight: 500;
+        letter-spacing: -0.04em;
+        margin-top: 20px;
       }
-      .stack > * + * {
+      .aside-rule {
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 24px 0 18px;
+      }
+      .analysis-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .analysis-grid article > h2 {
+        margin-bottom: 16px;
+      }
+      #sourceMetrics > div {
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+      #yahooMetrics p {
+        font-size: 0.875rem;
+      }
+      .flow-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        overflow: hidden;
+        background: var(--panel);
+      }
+      .flow-left {
+        min-width: 0;
+        padding: 21px;
+      }
+      .flow-scroll {
+        overflow-x: auto;
+        margin: 18px -6px 0;
+      }
+      .network {
+        min-width: 900px;
+      }
+      .network text {
+        font-family: Inter, "Segoe UI", sans-serif;
+      }
+      .network .module {
+        cursor: pointer;
+        outline: none;
+      }
+      .network .module rect {
+        fill: #151e2a;
+        stroke: #364357;
+        transition: stroke 0.2s;
+      }
+      .network .module:hover rect,
+      .network .module:focus-visible rect,
+      .network .module.selected rect {
+        stroke: #94b9ff;
+      }
+      .flow-edge {
+        fill: none;
+        stroke: #354256;
+        stroke-width: 1.2;
+      }
+      .flow-selection {
+        margin-top: 10px;
+        min-height: 42px;
+        font-size: 0.875rem;
+      }
+      .flow-selection pre {
+        max-height: 160px;
+        overflow: auto;
         margin-top: 10px;
       }
-      .stages {
-        gap: 4px;
-        margin: 12px 0;
+      .log-panel {
+        border-left: 1px solid var(--line);
+        min-width: 0;
       }
-      .stages span {
-        padding: 4px 8px;
-        background: #24343e;
-        border-radius: 5px;
-      }
-      .stages b {
-        color: var(--muted);
-      }
-      .timeline {
-        margin-top: 12px;
-        overflow: hidden;
-      }
-      .event {
-        padding: 12px 16px;
+      .log-header {
+        padding: 19px 16px;
         border-bottom: 1px solid var(--line);
       }
-      .event:last-child {
+      .timeline {
+        max-height: 460px;
+        overflow: auto;
         border: 0;
+        border-radius: 0;
+        background: transparent;
+        padding: 0;
+      }
+      .event {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        border-radius: 0;
+        background: transparent;
+        padding: 12px 16px;
+        font-size: 0.875rem;
+      }
+      .event.active {
+        background: #1d2b3d;
       }
       .route {
-        font-weight: 600;
+        font-size: 0.8rem;
+        font-weight: 500;
       }
       .stamp {
-        font-variant-numeric: tabular-nums;
         color: var(--muted);
-        margin-right: 10px;
+        font-size: 0.75rem;
+        margin-right: 8px;
+        font-variant-numeric: tabular-nums;
+      }
+      .event p {
+        color: #b6c3d3;
+        margin-top: 4px;
+        line-height: 1.45;
+      }
+      .review {
+        border-left: 3px solid #58789c;
       }
       details {
-        margin-top: 5px;
+        margin-top: 10px;
+      }
+      summary {
+        font-size: 0.875rem;
         color: var(--muted);
+        cursor: pointer;
       }
       pre {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
-        margin: 6px 0;
         font:
-          0.875rem/1.6 Consolas,
+          0.8rem/1.6 "IBM Plex Mono",
+          Consolas,
           monospace;
+        color: #9eafc3;
+        margin: 6px 0;
       }
-      #health.bad {
-        color: var(--amber);
+      footer {
+        margin-top: 25px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.8rem;
       }
-      @media (max-width: 740px) {
-        .metrics {
-          grid-template-columns: 1fr 1fr;
-        }
+      @media (max-width: 1100px) {
         .layout {
+          grid-template-columns: minmax(0, 1fr) 260px;
+        }
+        .flow-grid {
           grid-template-columns: 1fr;
         }
+        .log-panel {
+          border-left: 0;
+          border-top: 1px solid var(--line);
+        }
+        .timeline {
+          max-height: 265px;
+        }
+      }
+      @media (max-width: 760px) {
         main {
-          padding-top: 20px;
+          padding: 20px 16px;
+        }
+        .layout,
+        .analysis-grid {
+          grid-template-columns: 1fr;
+        }
+        .connections {
+          grid-template-columns: 1fr;
+          gap: 13px;
+        }
+        .metrics {
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+        }
+        .metric:nth-child(3) {
+          padding-left: 0;
+        }
+        .metric:nth-child(2) {
+          border: 0;
+        }
+        .chart-values {
+          gap: 14px 22px;
         }
         .bar label {
-          display: block;
+          flex-wrap: wrap;
         }
-        .stages {
-          gap: 2px;
+        .flow-left {
+          padding: 17px;
         }
-        .metric,
         article {
-          padding: 14px;
+          padding: 17px;
+        }
+        h1 {
+          font-size: 1.6rem;
         }
       }
     </style>
@@ -253,64 +454,108 @@
     <main>
       <header>
         <div>
-          <small>POLYMARKET &nbsp;/&nbsp; BTC · 5 MIN</small>
-          <h1>Monitor del agente</h1>
+          <div class="brand">BTC / POLYMARKET</div>
+          <h1>Terminal de investigación</h1>
         </div>
-        <div><div class="tag">Etapa 1 · Simulación</div></div>
+        <span class="tag">Etapa 1 · Simulación</span>
       </header>
       <section class="bar">
-        <span id="health" role="status">Conectando con el agente…</span
-        ><label
-          >Intervalo (hora local)
+        <span id="health" role="status">Conectando con el agente…</span>
+        <label
+          >Intervalo
           <select id="window">
             <option value="">Actual</option>
           </select></label
         >
       </section>
       <section id="connections" class="connections" aria-label="Estado de las conexiones"></section>
-      <section class="metrics" aria-label="Resultados acumulados">
+      <section class="metrics" aria-label="Resultados de la cartera simulada">
         <div class="metric"><small>Saldo virtual</small><strong id="cash">—</strong></div>
-        <div class="metric"><small>Ganancia realizada</small><strong id="pnl">—</strong></div>
+        <div class="metric"><small>Resultado realizado</small><strong id="pnl">—</strong></div>
         <div class="metric"><small>Compras simuladas</small><strong id="orders">—</strong></div>
         <div class="metric"><small>Pronósticos resueltos</small><strong id="labels">—</strong></div>
       </section>
       <section class="layout">
         <article>
           <div class="bar">
-            <h2>Mercado BTC 5 min · Up</h2>
+            <h2>BTC · Contrato Up</h2>
             <small id="interval"></small>
           </div>
           <div class="chart-values">
             <div><small>Precio Up</small><strong id="marketPrice">—</strong></div>
-            <div><small>Predicción Up · Laya</small><strong id="forecastPrice">—</strong></div>
+            <div><small>Laya · Predicción Up</small><strong id="forecastPrice">—</strong></div>
+            <div><small>MLP Yahoo · Predicción Up</small><strong id="yahooPrice">—</strong></div>
           </div>
           <p id="empty" class="muted"></p>
           <svg
             id="chart"
             viewBox="0 0 640 280"
             role="img"
-            aria-label="Precio del contrato Up y puntuación experimental de Laya para Up"
+            aria-label="Precio del contrato Up y predicciones de Laya y MLP Yahoo"
           ></svg>
           <div class="legend">
-            <small><i style="background: #ffa513"></i>Polymarket · Up</small
-            ><small><i style="background: #94b9ff"></i>Laya · Up al abrir</small
-            ><small id="ticks"></small>
+            <small><i style="background: #ffa513"></i>Polymarket</small>
+            <small><i style="background: #94b9ff"></i>Laya</small>
+            <small><i style="background: #d4a3ff"></i>MLP Yahoo</small>
           </div>
-          <p id="layaSignal" class="muted"></p>
+          <small id="ticks"></small>
+          <p id="layaSignal" class="section-note"></p>
         </article>
         <article class="stack">
-          <h2>Decisión del intervalo</h2>
+          <h2>Decisión simulada</h2>
           <div id="signal" class="signal">—</div>
           <p id="decision"></p>
           <p id="origin" class="muted"></p>
           <p id="winner"></p>
+          <hr class="aside-rule" />
+          <h3>Libro del próximo intervalo</h3>
+          <p id="last"></p>
+          <small id="lastTime"></small>
         </article>
       </section>
-      <section class="layout">
+      <section class="bar">
+        <h2>Flujo de información</h2>
+        <button type="button" id="replayFlow">Reproducir eventos</button>
+      </section>
+      <section class="flow-grid">
+        <div class="flow-left">
+          <div class="bar">
+            <small id="flowStatus" role="status">Esperando mensajes</small
+            ><button type="button" id="clearFlow" hidden>Ver todos</button>
+          </div>
+          <div class="flow-scroll">
+            <svg
+              id="network"
+              class="network"
+              viewBox="0 0 1000 390"
+              role="group"
+              aria-label="Red de comunicación entre los módulos del bot"
+            ></svg>
+          </div>
+          <div id="flowSelection" class="flow-selection">
+            <span class="muted">Selecciona un módulo o un mensaje para consultar sus datos.</span>
+          </div>
+        </div>
+        <div class="log-panel">
+          <div class="log-header"><h3>Registro del intervalo</h3></div>
+          <div id="events" class="timeline"></div>
+        </div>
+      </section>
+      <section>
+        <article class="review stack">
+          <div class="bar">
+            <h2>Verificación del supervisor</h2>
+            <small id="observerModel"></small>
+          </div>
+          <p id="observerNote"></p>
+          <small id="observerStatus"></small>
+        </article>
+      </section>
+      <section class="analysis-grid">
         <article class="stack">
-          <h2>Aprendizaje prospectivo</h2>
+          <h2>MLP del libro de órdenes</h2>
           <p id="learning"></p>
-          <small id="comparison"></small>
+          <p id="comparison" class="muted"></p>
           <p id="shadowMetrics" class="muted"></p>
           <div id="sourceMetrics" class="stack"></div>
           <details id="validation">
@@ -319,30 +564,17 @@
           </details>
         </article>
         <article class="stack">
-          <h2>Última cotización recibida</h2>
-          <p id="last"></p>
-          <small id="lastTime"></small>
+          <h2>MLP de Yahoo Finance</h2>
+          <p id="yahooState"></p>
+          <p id="yahooHistory" class="muted"></p>
+          <div id="yahooMetrics" class="stack"></div>
         </article>
       </section>
-      <section>
-        <article class="stack">
-          <div class="bar">
-            <h2>Supervisor de IA</h2>
-            <small id="observerModel"></small>
-          </div>
-          <p id="observerNote"></p>
-          <small id="observerStatus"></small>
-        </article>
-      </section>
-      <section>
-        <h2>Comunicación entre módulos</h2>
-        <div class="stages" aria-label="Flujo del agente">
-          <span>Libro</span><b>›</b><span>Modelo</span><b>›</b><span>Riesgo</span><b>›</b
-          ><span>Cartera</span>
-        </div>
-        <div id="events" class="timeline"></div>
-      </section>
+      <footer>
+        Precios del contrato en porcentaje · Pronósticos de apertura · Contabilidad en USD virtuales
+      </footer>
     </main>
+
     <script>
       "use strict"
       /* Interpolación visual acotada entre cotizaciones. Los datos originales se conservan. */
@@ -381,6 +613,12 @@
             stroke: "#94b9ff",
             "stroke-width": "2",
             "stroke-dasharray": "7 5",
+          })
+          this.yahooPrediction = this.add("path", {
+            fill: "none",
+            stroke: "#d4a3ff",
+            "stroke-width": "2",
+            "stroke-dasharray": "3 5",
           })
           this.guide = this.add("line", {
             stroke: "#ffa513",
@@ -440,6 +678,7 @@
           this.focus = state.focus
           this.rows = state.prices
           this.forecast = state.laya
+          this.yahooForecast = state.yahoo?.forecast
           if (!animate) {
             this.draw()
             return
@@ -563,13 +802,321 @@
             const stale = Date.now() / 1000 - this.rows.at(-1).seen > 18
             this.halo.style.display = stale ? "none" : ""
           }
-          const f = this.forecast
-          let forecastPath = ""
-          if (f?.p != null) {
-            const end = Math.min(this.focus + 300, Date.now() / 1000)
-            if (f.ready <= end) forecastPath = `M ${x(f.ready)} ${y(f.p)} L ${x(end)} ${y(f.p)}`
+          for (const [line, f] of [
+            [this.prediction, this.forecast],
+            [this.yahooPrediction, this.yahooForecast],
+          ]) {
+            let forecastPath = ""
+            if (f?.p != null) {
+              const end = Math.min(this.focus + 300, Date.now() / 1000)
+              if (f.ready <= end) forecastPath = `M ${x(f.ready)} ${y(f.p)} L ${x(end)} ${y(f.p)}`
+            }
+            line.setAttribute("d", forecastPath)
           }
-          this.prediction.setAttribute("d", forecastPath)
+        }
+      }
+
+      class FlowMap {
+        constructor(svg) {
+          this.svg = svg
+          this.messages = []
+          this.focus = null
+          this.seen = new Set()
+          this.queue = []
+          this.timer = null
+          this.selection = null
+          this.motion = window.matchMedia("(prefers-reduced-motion: reduce)")
+          this.definitions = {
+            market: [20, 60, "Polymarket", "Fuente pública"],
+            book: [220, 60, "Libro", "Datos de apertura"],
+            model: [420, 60, "MLP del libro", "Referencia"],
+            risk: [640, 60, "Riesgo", "Reglas y límites"],
+            wallet: [840, 60, "Cartera", "Simulación"],
+            yahoo: [20, 260, "Yahoo Finance", "Velas de 5 min"],
+            yahooModel: [220, 260, "MLP Yahoo", "BTC-USD"],
+            laya: [420, 160, "Laya", "Servidor"],
+            training: [420, 260, "Entrenamiento", "Etiquetas maduras"],
+            supervisor: [640, 200, "Supervisor", "Servidor"],
+            monitor: [840, 230, "Monitor", "Interfaz local"],
+          }
+          this.alias = {
+            CLOB: "market",
+            Gamma: "market",
+            Datos: "market",
+            Resolución: "market",
+            Libro: "book",
+            Modelo: "model",
+            Riesgo: "risk",
+            Cartera: "wallet",
+            Yahoo: "yahoo",
+            "Yahoo MLP": "yahooModel",
+            Laya: "laya",
+            Entrenamiento: "training",
+            Supervisor: "supervisor",
+            Monitor: "monitor",
+          }
+          this.paths = {
+            "market/book": "M160 87 C185 87 195 87 220 87",
+            "book/model": "M360 87 C385 87 395 87 420 87",
+            "book/laya": "M360 87 C395 87 385 187 420 187",
+            "model/risk": "M560 87 C590 87 610 87 640 87",
+            "risk/wallet": "M780 87 C805 87 815 87 840 87",
+            "yahoo/yahooModel": "M160 287 C185 287 195 287 220 287",
+            "yahooModel/supervisor": "M360 287 C395 287 375 227 640 227",
+            "laya/supervisor": "M560 187 C600 187 600 227 640 227",
+            "market/training": "M20 87 L5 87 L5 365 L490 365 L490 315",
+            "training/model": "M560 287 C600 287 600 87 560 87",
+            "market/wallet": "M90 60 L90 15 L910 15 L910 60",
+            "supervisor/monitor": "M780 227 C810 227 810 257 840 257",
+            "monitor/supervisor": "M840 270 C815 300 795 265 780 245",
+          }
+          this.edges = new Map()
+          this.nodes = {}
+          const arrow = this.add("marker", {
+            id: "flow-arrow",
+            viewBox: "0 0 6 6",
+            refX: 6,
+            refY: 3,
+            markerWidth: 6,
+            markerHeight: 6,
+            orient: "auto",
+          })
+          arrow.append(this.element("path", { d: "M0 0 L6 3 L0 6 Z", fill: "#52637a" }))
+          for (const key of Object.keys(this.paths)) this.edge(key)
+          for (const [id, [x, y, label, subtitle]] of Object.entries(this.definitions)) {
+            const group = this.add("g", {
+              class: "module",
+              role: "button",
+              tabindex: 0,
+              "aria-label": label,
+              transform: `translate(${x} ${y})`,
+            })
+            const dot = this.element("circle", { cx: 124, cy: 15, r: 3, fill: "#738397" })
+            const sub = this.element(
+              "text",
+              { x: 12, y: 41, fill: "#8e9cae", "font-size": 14 },
+              subtitle,
+            )
+            group.append(
+              this.element("rect", { width: 140, height: 55, rx: 6 }),
+              dot,
+              this.element("text", { x: 12, y: 22, fill: "#e7edf4", "font-size": 16 }, label),
+              sub,
+            )
+            const select = () => {
+              this.selection = this.selection === id ? null : id
+              this.lastListKey = null
+              el("clearFlow").hidden = !this.selection
+              this.paintList()
+              el("flowSelection").replaceChildren(
+                node(
+                  "p",
+                  this.selection
+                    ? label + " · mensajes del módulo seleccionado"
+                    : "Todos los mensajes del intervalo",
+                  "muted",
+                ),
+              )
+              for (const [key, module] of Object.entries(this.nodes))
+                module.group.classList.toggle("selected", key === this.selection)
+            }
+            group.addEventListener("click", select)
+            group.addEventListener("keydown", (event) => {
+              if (["Enter", " "].includes(event.key)) {
+                event.preventDefault()
+                select()
+              }
+            })
+            this.nodes[id] = { group, dot, sub }
+          }
+          this.particles = this.add("g", { "aria-hidden": "true" })
+          el("replayFlow").addEventListener("click", () => {
+            this.cancel()
+            this.replaying = true
+            this.queue = this.messages.slice(-80)
+            this.next()
+          })
+          el("clearFlow").addEventListener("click", () => {
+            this.selection = null
+            for (const module of Object.values(this.nodes)) module.group.classList.remove("selected")
+            el("clearFlow").hidden = true
+            this.lastListKey = null
+            this.paintList()
+          })
+          document.addEventListener("visibilitychange", () => {
+            if (document.hidden) this.cancel()
+          })
+        }
+        element(tag, attrs, text) {
+          const n = document.createElementNS("http://www.w3.org/2000/svg", tag)
+          for (const [key, value] of Object.entries(attrs)) n.setAttribute(key, value)
+          if (text != null) n.textContent = text
+          return n
+        }
+        add(tag, attrs, text) {
+          const n = this.element(tag, attrs, text)
+          this.svg.append(n)
+          return n
+        }
+        edge(key) {
+          if (this.edges.has(key)) return this.edges.get(key)
+          if (!this.paths[key]) {
+            const [from, to] = key.split("/")
+            const a = this.definitions[from],
+              b = this.definitions[to]
+            this.paths[key] =
+              `M${a[0] + 140} ${a[1] + 27} C${a[0] + 170} ${a[1] + 27} ${b[0] - 30} ${b[1] + 27} ${b[0]} ${b[1] + 27}`
+          }
+          const line = this.add("path", {
+            d: this.paths[key],
+            class: "flow-edge",
+            "marker-end": "url(#flow-arrow)",
+          })
+          this.edges.set(key, line)
+          return line
+        }
+        cancel() {
+          clearTimeout(this.timer)
+          this.timer = null
+          this.queue = []
+          this.replaying = false
+          this.particles?.replaceChildren()
+          for (const line of this.edges.values()) line.style.stroke = ""
+        }
+        next() {
+          if (this.timer != null) return
+          const event = this.queue.shift()
+          if (!event) {
+            set("flowStatus", this.replaying ? "Reproducción terminada" : "Esperando nuevos mensajes")
+            this.replaying = false
+            return
+          }
+          const key = this.alias[event.source] + "/" + this.alias[event.target]
+          const line = this.edge(key)
+          line.style.stroke = "#82c8ad"
+          set(
+            "flowStatus",
+            (this.replaying ? "Reproduciendo · " : "Recibido · ") + event.source + " → " + event.target,
+          )
+          if (!this.motion.matches && !document.hidden) {
+            const dot = this.element("circle", { r: 4, fill: "#a0e7ce" })
+            const movement = this.element("animateMotion", {
+              dur: ".8s",
+              path: this.paths[key],
+              begin: "indefinite",
+              fill: "freeze",
+            })
+            dot.append(movement)
+            this.particles.append(dot)
+            movement.beginElement?.()
+          }
+          this.timer = setTimeout(() => {
+            line.style.stroke = ""
+            this.particles.replaceChildren()
+            this.timer = null
+            this.next()
+          }, 900)
+        }
+        paintList() {
+          const list = this.selection
+            ? this.messages.filter(
+                (e) =>
+                  this.alias[e.source] === this.selection || this.alias[e.target] === this.selection,
+              )
+            : this.messages
+          const key = list.map((e) => e.key).join("|")
+          if (key === this.lastListKey) return
+          this.lastListKey = key
+          const root = el("events")
+          root.replaceChildren()
+          for (const event of [...list].reverse()) {
+            const item = node("button", null, "event")
+            item.type = "button"
+            item.append(
+              node("small", local(event.at), "stamp"),
+              node("span", event.source + " → " + event.target, "route"),
+              node("p", event.message),
+            )
+            item.addEventListener("click", () => {
+              root.querySelectorAll(".active").forEach((n) => n.classList.remove("active"))
+              item.classList.add("active")
+              el("flowSelection").replaceChildren(
+                node("p", local(event.at) + " · " + event.source + " → " + event.target),
+                node("p", event.message, "muted"),
+                node("pre", JSON.stringify(event.payload, null, 2)),
+              )
+            })
+            root.append(item)
+          }
+          if (!list.length)
+            root.append(node("p", "Esperando mensajes de este intervalo.", "event muted"))
+        }
+        update(s) {
+          const first = this.focus !== s.focus
+          if (first) {
+            this.cancel()
+            this.focus = s.focus
+            this.seen.clear()
+            this.selection = null
+            el("clearFlow").hidden = true
+            el("flowSelection").replaceChildren(
+              node("span", "Selecciona un módulo o un mensaje para consultar sus datos.", "muted"),
+            )
+            this.lastListKey = null
+          }
+          this.messages = s.trace
+            .filter((e) => this.alias[e.source] && this.alias[e.target])
+            .map((e, i) => ({ ...e, key: "trace-" + (e.id ?? `${e.at}-${i}`) }))
+          const quote = s.last_tick
+          if (s.focus === s.current && quote?.seen >= s.focus) {
+            this.messages.push({
+              key: "quote-" + quote.seen,
+              at: quote.seen,
+              source: "CLOB",
+              target: "Libro",
+              message: "Libro Up del próximo intervalo actualizado",
+              payload: { market_start: quote.start, bid: quote.bid, ask: quote.ask },
+            })
+          }
+          for (const note of s.notes ?? [])
+            this.messages.push({
+              key: "note-" + note.at,
+              at: note.at,
+              source: "Supervisor",
+              target: "Monitor",
+              message: note.note,
+              payload: { model: note.model, level: note.level },
+            })
+          this.messages.sort((a, b) => a.at - b.at)
+          const incoming = this.messages.filter((e) => !this.seen.has(e.key))
+          for (const e of this.messages) this.seen.add(e.key)
+          this.paintList()
+          const states = Object.fromEntries((s.services ?? []).map((item) => [item.service, item]))
+          for (const [id, service] of [
+            ["market", "polymarket"],
+            ["laya", "laya"],
+            ["supervisor", "supervisor"],
+          ]) {
+            const status = states[service]
+            this.nodes[id].dot.setAttribute(
+              "fill",
+              status?.state === "ok"
+                ? "#82c8ad"
+                : status?.state === "error" || status?.state === "unconfigured"
+                  ? "#e5b66a"
+                  : "#738397",
+            )
+          }
+          this.nodes.model.sub.textContent = s.model ? "MLP entrenado" : "Referencia"
+          this.nodes.yahooModel.sub.textContent = s.yahoo?.model ? "MLP 16 · 8" : "Sin entrenar"
+          if (!first && !this.replaying && s.focus === s.current && !document.hidden) {
+            this.queue.push(...incoming.slice(-12))
+            if (incoming.length) this.next()
+          } else if (first)
+            set(
+              "flowStatus",
+              s.focus === s.current ? "Esperando nuevos mensajes" : "Registro histórico del intervalo",
+            )
         }
       }
 
@@ -591,6 +1138,7 @@
         return n
       }
       const marketChart = new MarketChart(el("chart"))
+      const flowMap = new FlowMap(el("network"))
       function chart(s) {
         const rows = s.prices,
           forecast = s.laya
@@ -611,6 +1159,7 @@
         )
         set("marketPrice", pct(last?.price))
         set("forecastPrice", pct(forecast?.p))
+        set("yahooPrice", pct(s.yahoo?.forecast?.p))
         marketChart.update(s)
       }
       function connections(s) {
@@ -708,6 +1257,54 @@
         set("decision", f?.decision ?? "A la espera de la apertura")
         set("origin", f?.version ? "Origen · " + f.version : "")
         set("winner", f?.winner ? "Resolución oficial · " + f.winner : "")
+        const yahoo = s.yahoo
+        set(
+          "yahooState",
+          yahoo?.forecast?.p != null
+            ? "Pronóstico experimental · " +
+                (yahoo.forecast.p >= 0.5 ? "Up" : "Down") +
+                " · puntuación Up " +
+                pct(yahoo.forecast.p)
+            : (yahoo?.forecast?.detail ??
+                (yahoo?.model
+                  ? "Esperando la próxima apertura"
+                  : "Modelo histórico pendiente de entrenamiento")),
+        )
+        const history = yahoo?.model?.report
+        set(
+          "yahooHistory",
+          history
+            ? "Evaluación histórica BTC-USD · " +
+                history.test.n +
+                " velas · acierto " +
+                pct(history.test.accuracy) +
+                " / referencia mayoritaria " +
+                pct(history.majority.accuracy) +
+                " · Brier " +
+                history.test.brier.toFixed(3) +
+                " · " +
+                (yahoo.status?.detail ?? "")
+            : (yahoo?.status?.detail ?? "Esperando historial"),
+        )
+        const yahooMetrics = el("yahooMetrics")
+        yahooMetrics.replaceChildren()
+        for (const item of yahoo?.metrics ?? []) {
+          yahooMetrics.append(
+            node(
+              "p",
+              "Polymarket · " +
+                item.model +
+                " · " +
+                item.n +
+                " intervalos comunes · acierto " +
+                pct(item.accuracy) +
+                " / libro " +
+                pct(item.book_accuracy) +
+                " · Brier " +
+                item.brier.toFixed(3),
+            ),
+          )
+        }
         set(
           "learning",
           s.model
@@ -779,35 +1376,7 @@
           (obs?.detail ?? "Iniciando supervisión") +
             (note ? " · Informe de " + note.model + " · " + local(note.at) + " · " + note.level : ""),
         )
-        const events = el("events")
-        events.replaceChildren()
-        for (const e of s.trace) {
-          const item = node("div", null, "event")
-          item.append(
-            node("small", local(e.at), "stamp"),
-            node("span", e.source + " → " + e.target, "route"),
-            node("p", e.message),
-          )
-          if (Object.keys(e.payload).length) {
-            const det = node("details")
-            det.append(
-              node("summary", "Datos del mensaje"),
-              node("pre", JSON.stringify(e.payload, null, 2)),
-            )
-            item.append(det)
-          }
-          events.append(item)
-        }
-        if (!s.trace.length)
-          events.append(
-            node(
-              "p",
-              s.ticks.length
-                ? "Libro → Modelo · Recibiendo cotizaciones para la apertura."
-                : "Aún no se han registrado mensajes para este intervalo.",
-              "event muted",
-            ),
-          )
+        flowMap.update(s)
       }
       let seq = 0,
         previous = ""

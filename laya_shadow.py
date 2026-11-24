@@ -65,6 +65,9 @@ def run(path, directory, stop, remote=None):
                     score = None
                     try:
                         status(source + " · solicitando predicción", "busy")
+                        with db:
+                            db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
+                                (start,time.time(),"Libro","Laya","Entradas de apertura enviadas",json.dumps({"variables":json.loads(row[0])})))
                         score = infer(json.loads(row[0]))
                         detail = "Disponible"
                     except Exception as exc:

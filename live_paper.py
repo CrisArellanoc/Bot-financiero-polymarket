@@ -18,6 +18,7 @@ import live_model as ml
 import local_observer
 import laya_shadow
 import service_status
+import yahoo_predictor
 from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
 from settings import load_settings
 from autonomy import Limits, PaperLedger, number
@@ -161,6 +162,7 @@ class Agent:
         """)
         local_observer.tables(self.db)
         service_status.initialize(self.db)
+        yahoo_predictor.tables(self.db)
         self.next_view = None
         self.last_maintenance = 0
 
@@ -187,6 +189,7 @@ class Agent:
                           bid_up=bid, ask_up=ask, recibido=seen)
 
     def decide(self, start):
+        yahoo_predictor.forecast(self.db,start)
         row = self.db.execute("SELECT decision FROM forecasts WHERE start=?", (start,)).fetchone()
         if row and row[0] is not None:
             return
@@ -253,7 +256,8 @@ class Agent:
 
     def resolve(self, now):
         # Reintentos rotativos para que un mercado atrasado no bloquee los siguientes.
-        pending = self.db.execute("""SELECT start FROM forecasts WHERE p IS NOT NULL AND winner IS NULL
+        pending = self.db.execute("""SELECT start FROM forecasts WHERE (p IS NOT NULL OR EXISTS(
+            SELECT 1 FROM yahoo_predictions y WHERE y.start=forecasts.start AND y.p IS NOT NULL)) AND winner IS NULL
             AND start+300<=? AND checked<=? ORDER BY checked,start LIMIT 3""", (now, now-60)).fetchall()
         for (start,) in pending:
             with self.db:
@@ -279,11 +283,11 @@ class Agent:
                     self.emit(start, "Resolución", "Cartera", "Pago simulado contabilizado", pnl_neto=pnl)
 
     def train(self, start):
-        n = self.db.execute("SELECT count(*) FROM forecasts WHERE labeled IS NOT NULL").fetchone()[0]
+        n = self.db.execute("SELECT count(*) FROM forecasts WHERE labeled IS NOT NULL AND x IS NOT NULL").fetchone()[0]
         last = self.db.execute("SELECT coalesce(max(n),0) FROM models").fetchone()[0]
         if n < ml.MIN_ROWS or n-last < ml.BATCH:
             return
-        rows = self.db.execute("""SELECT start,x,winner,labeled FROM forecasts WHERE labeled IS NOT NULL
+        rows = self.db.execute("""SELECT start,x,winner,labeled FROM forecasts WHERE labeled IS NOT NULL AND x IS NOT NULL
             ORDER BY start DESC LIMIT ?""", (ml.MAX_ROWS,)).fetchall()
         model, report = ml.fit_candidate([(t, json.loads(x), int(w == "Up"), seen) for t, x, w, seen in rows])
         with self.db:
@@ -314,10 +318,10 @@ def snapshot(path, selected=None):
         focus = selected if selected is not None else current
         forecast = rows("SELECT start,seen,p,version,eligible,decision,winner,labeled FROM forecasts WHERE start=?", (focus,))
         ticks = rows("SELECT seen,ts,bid,ask FROM ticks WHERE start=? ORDER BY seen", (focus,))
-        trace = rows("SELECT at,source,target,message,payload FROM trace WHERE start=? ORDER BY id", (focus,))
+        trace = rows("SELECT id,at,source,target,message,payload FROM trace WHERE start=? ORDER BY id", (focus,))
         for msg in trace:
             msg["payload"] = json.loads(msg["payload"])
-        summary = rows("""SELECT count(p) AS predictions,count(winner) AS labeled,
+        summary = rows("""SELECT count(p) AS predictions,count(CASE WHEN p IS NOT NULL THEN winner END) AS labeled,
             avg(CASE WHEN winner IS NOT NULL THEN ((p>=0.5)=(winner='Up')) END) AS accuracy,
             avg(CASE WHEN winner IS NOT NULL THEN (((json_extract(x,'$[0]')>=0.5)=(winner='Up'))) END) AS baseline
             FROM forecasts""")[0]
@@ -345,6 +349,16 @@ def snapshot(path, selected=None):
             avg(CASE WHEN f.version LIKE 'MLP-%' THEN ((l.p>=0.5)=(f.winner='Up')) END) AS laya_shared
             FROM laya_predictions l JOIN forecasts f USING(start) WHERE l.p IS NOT NULL AND f.winner IS NOT NULL""")[0]
         state = db.execute("SELECT detail FROM laya_status").fetchone()
+        yahoo_model = rows("SELECT id,ready,report FROM yahoo_models ORDER BY ready DESC LIMIT 1")
+        if yahoo_model:
+            yahoo_model[0]["report"] = json.loads(yahoo_model[0]["report"])
+        yahoo_forecast = rows("SELECT start,ready,p,model,detail FROM yahoo_predictions WHERE start=?",(focus,))
+        yahoo_status = rows("SELECT at,detail FROM yahoo_status WHERE id=1")
+        yahoo_metrics = rows("""SELECT y.model,count(*) AS n,avg((y.p>=0.5)=(f.winner='Up')) AS accuracy,
+            avg((y.p-(f.winner='Up'))*(y.p-(f.winner='Up'))) AS brier,
+            avg((json_extract(f.x,'$[0]')>=0.5)=(f.winner='Up')) AS book_accuracy
+            FROM yahoo_predictions y JOIN forecasts f USING(start)
+            WHERE y.p IS NOT NULL AND f.winner IS NOT NULL AND f.x IS NOT NULL GROUP BY y.model""")
         services = rows("""SELECT service,state,at,last_ok,detail FROM service_status
             ORDER BY CASE service WHEN 'polymarket' THEN 0 WHEN 'laya' THEN 1 ELSE 2 END""")
         by_source = rows("""SELECT coalesce(s.model,'Laya local') AS source, count(*) AS n,
@@ -359,6 +373,8 @@ def snapshot(path, selected=None):
             WHERE l.p IS NOT NULL AND f.winner IS NOT NULL
             GROUP BY coalesce(s.model,'Laya local') ORDER BY source""")
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
+                    yahoo=dict(model=next(iter(yahoo_model),None),forecast=next(iter(yahoo_forecast),None),
+                               status=next(iter(yahoo_status),None),metrics=yahoo_metrics),
                     services=services,comparison_by_source=by_source,mode="paper",
                     prices=prices,laya=next(iter(prediction),None),comparison=comparison,
                     laya_status=state[0] if state else "Esperando inicio",
@@ -452,6 +468,7 @@ def serve(args, config):
             local_observer.status(agent.db, "Supervisor remoto", str(exc))
             service_status.record(agent.db, "supervisor", "unconfigured", str(exc))
     Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
+    Thread(target=yahoo_predictor.collect,args=(args.db,stop),daemon=True).start()
     try:
         predictor = None if args.laya_local else RemoteLaya.from_env(config)
         Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop,predictor), daemon=True).start()

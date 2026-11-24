@@ -12,9 +12,35 @@ python live_paper.py
 
 Abre [el monitor local](http://127.0.0.1:8765). Déjalo corriendo para acumular intervalos y detén el proceso con Ctrl+C. Guarda cotizaciones, mensajes, pronósticos, etiquetas, modelos y cartera en `data/live_paper.sqlite`. Al reiniciar vuelve a la misma cartera. El selector permite explorar un intervalo anterior y desplegar los datos de cada mensaje. El notebook sigue siendo la entrada para el análisis histórico.
 
+### Red de comunicación del monitor
+
+La terminal organiza el mercado, la decisión simulada, la evaluación de modelos y la verificación del supervisor. El diagrama muestra módulos de adquisición, predicción, riesgo y cartera. Al recibir una cotización o un mensaje nuevo, ilumina su recorrido. Selecciona un nodo para filtrar sus mensajes o un mensaje para consultar su contenido.
+
+`Reproducir eventos` recorre el registro del intervalo seleccionado y lo identifica como reproducción. Los informes del supervisor aparecen como entregas a la interfaz. La visualización respeta movimiento reducido y detiene la reproducción al esconder la pestaña. Estas interacciones consultan los datos ya registrados.
+
 ### Dos modelos en el servidor
 
 El modo predeterminado usa dos conexiones HTTPS independientes. Laya recibe las cinco variables congeladas al abrir el mercado, devuelve una puntuación Up experimental y deja constancia de cuándo estuvo disponible. El supervisor revisa los eventos del bot, incluida la predicción de Laya. Comprueba actividad cada pocos segundos y recibe un control periódico de cotización y actividad aproximadamente cada minuto mientras el proceso está funcionando. Selecciona los hechos relevantes y marca observación o atención. Las reglas deterministas y la cartera siguen gobernando las compras simuladas.
+
+### Predictor histórico de Yahoo Finance
+
+El proyecto incluye un MLP adicional con dos capas ocultas de 16 y 8 neuronas. Aprende de velas completas de BTC-USD a cinco minutos descargadas de Yahoo Finance. Usa 24 retornos, media, volatilidad, rango y volumen relativo. Separa la última vela utilizada del intervalo objetivo por cinco minutos para dar margen a su publicación.
+
+Para descargar hasta 60 días, auditar los datos y entrenarlo, ejecuta desde la carpeta del proyecto:
+
+```powershell
+.\.venv\Scripts\python.exe yahoo_predictor.py
+```
+
+Reutiliza las dependencias de entrenamiento de `requirements-lock.txt`. La descarga y la inferencia en vivo usan la biblioteca estándar. El ajuste se ejecuta una vez en un proceso independiente y limita el cálculo numérico a un hilo. Guarda pesos, reporte y pronósticos en `data/live_paper.sqlite` y conserva la captura original de Yahoo dentro de `data/`, excluida de Git.
+
+Reinicia `live_paper.py` después de actualizar el código. El bot actualiza las velas completas una vez por minuto, calcula el pronóstico al abrir cada mercado y muestra una línea morada junto al precio del contrato y a Laya. Solo utiliza entradas recibidas antes de la apertura y una versión del modelo que ya existiera en ese instante. Ante huecos, datos tardíos o un modelo de más de siete días, registra una abstención. Repite el comando de entrenamiento para actualizar el modelo.
+
+El entrenamiento usa un corte temporal fijo de 60% para ajustar, 20% para calibrar probabilidades y 20% para evaluar. La etiqueta histórica es cierre mayor o igual a apertura de la vela Yahoo. El informe conserva acierto, Brier y referencias de mayoría y persistencia. La disponibilidad histórica es una hipótesis basada en velas cerradas y el margen temporal, pues el historial descargado no demuestra su fecha original de publicación.
+
+El monitor identifica la evaluación histórica BTC-USD y la evaluación prospectiva contra las resoluciones oficiales de Polymarket. Las métricas de esta última usan los mismos intervalos que la referencia del libro y se agrupan por versión del modelo. La señal Yahoo es experimental y su reporte conserva `paper_trading_approved=false`.
+
+[Referencia de datos intradía de yfinance](https://ranaroussi.github.io/yfinance/reference/api/yfinance.download.html)
 
 ### Configuración privada en Windows
 

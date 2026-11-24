@@ -82,6 +82,8 @@ def validate_note(note, evidence):
 
 
 def event_fact(source, target, message, data):
+    if source == "Yahoo MLP" and data.get("p_up") is not None:
+        return f"El MLP entrenado con Yahoo registró una puntuación Up de {data['p_up']:.1%}."
     if source == "Laya" and data.get("p_up") is not None:
         return f"{data['modelo']} registró una puntuación Up de {data['p_up']:.1%}."
     if message == "Pronóstico de apertura":

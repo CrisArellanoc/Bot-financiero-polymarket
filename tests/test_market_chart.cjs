@@ -6,16 +6,22 @@ const vm = require("node:vm")
 
 function chartFixture(reducedMotion = false) {
   class Element {
-    constructor() { this.attributes = {}; this.children = []; this.style = {} }
+    constructor() { this.attributes = {}; this.children = []; this.style = {}; this.listeners = {};
+      this.classList={toggle(){},remove(){},add(){}} }
     setAttribute(key,value) { this.attributes[key] = String(value) }
     append(...children) { this.children.push(...children) }
     replaceChildren(...children) { this.children = children }
     getBoundingClientRect() { return {width:640} }
+    addEventListener(name,handler) { this.listeners[name]=handler }
   }
   const frames = new Map()
   let id = 0
-  const document = {hidden:false,createElementNS:()=>new Element(),addEventListener(){}}
-  const sandbox = {document,Date,performance:{now:()=>0},
+  const elements=new Map(),timeouts=new Map(),listeners={}
+  const el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)}
+  const document = {hidden:false,createElementNS:()=>new Element(),addEventListener(name,fn){listeners[name]=fn}}
+  const sandbox = {document,Date,performance:{now:()=>0},el,local:t=>String(t),
+    node:(tag,text)=>{const n=new Element();n.textContent=text;return n},set:(id,text)=>{el(id).textContent=text},
+    setTimeout:fn=>{timeouts.set(++id,fn);return id},clearTimeout:id=>timeouts.delete(id),
     window:{matchMedia:()=>({matches:reducedMotion})},
     ResizeObserver:class { observe() {} },
     requestAnimationFrame:cb=>{frames.set(++id,cb);return id},
@@ -23,8 +29,8 @@ function chartFixture(reducedMotion = false) {
   const html = readFileSync(path.join(__dirname,"../monitor.html"),"utf8")
   const start = html.indexOf("class MarketChart")
   const end = html.indexOf("const el =",start)
-  const Chart = vm.runInNewContext(html.slice(start,end)+"; MarketChart",sandbox)
-  return {chart:new Chart(new Element()),frames,document,
+  const {Chart,Flow} = vm.runInNewContext(html.slice(start,end)+"; ({Chart:MarketChart,Flow:FlowMap})",sandbox)
+  return {chart:new Chart(new Element()),flow:()=>new Flow(new Element()),frames,document,el,listeners,timeouts,
     step(now) { const callbacks=[...frames.values()];frames.clear();callbacks.forEach(cb=>cb(now)) }}
 }
 const state = (prices,focus=3000) => ({focus,current:focus,prices,laya:{ready:focus+12,p:.65}})
@@ -47,6 +53,25 @@ test("La curva conserva extremos y huecos y la predicción empieza cuando está 
   assert.equal(forecast[0],10+(589-10)*12/300)
   assert.equal(forecast[1],forecast[3])
   assert.equal(JSON.stringify(input),original)
+})
+
+test("La red anima solamente mensajes nuevos y cancela la reproducción al cambiar de intervalo",()=>{
+  const f=chartFixture()
+  const network=f.flow()
+  const s={focus:3000,current:3000,trace:[{id:1,at:3001,source:"CLOB",target:"Libro",message:"Lectura",payload:{}}],
+    notes:[],services:[]}
+  network.update(s)
+  assert.equal(f.timeouts.size,0)
+  s.trace.push({id:2,at:3002,source:"Libro",target:"Laya",message:"Enviado",payload:{}})
+  network.update(s)
+  assert.equal(f.timeouts.size,1)
+  network.update(s)
+  assert.equal(network.queue.length,0)
+  f.el("replayFlow").listeners.click()
+  assert.equal(network.replaying,true)
+  network.update({...s,focus:3300,current:3300,trace:[]})
+  assert.equal(f.timeouts.size,0)
+  assert.equal(network.particles.children.length,0)
 })
 function bottom(price) { return 241-(241-18)*price }
 
