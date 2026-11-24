@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 from live_model import FEATURES
+import service_status
 
 REVISION = "fd4f9dbcf4fde222fd43174bdd4c3b08b789e4e1"
 QUESTION = {"up": {"type": "noul", "instructions":
@@ -37,12 +38,13 @@ def predict(model, values):
 
 def run(path, directory, stop, remote=None):
     with closing(sqlite3.connect(path, timeout=10)) as db:
-        def status(detail):
+        def status(detail, state="waiting", success=False):
             with db:
                 db.execute("INSERT OR REPLACE INTO laya_status VALUES(1,?)", (detail,))
+            service_status.record(db, "laya", state, detail, success)
         try:
             if remote is None:
-                status("Cargando pesos en CPU")
+                status("Cargando pesos en CPU", "busy")
                 model = load_model(directory)
                 infer = lambda values: predict(model, values)
                 source = "Laya local"
@@ -50,7 +52,7 @@ def run(path, directory, stop, remote=None):
                 infer = remote.predict
                 source = "Remoto · " + remote.name
         except Exception as exc:
-            status(str(exc))
+            status(str(exc), "error")
             return
         status(source + " · esperando apertura")
         while not stop.is_set():
@@ -62,6 +64,7 @@ def run(path, directory, stop, remote=None):
                 if row:
                     score = None
                     try:
+                        status(source + " · solicitando predicción", "busy")
                         score = infer(json.loads(row[0]))
                         detail = "Disponible"
                     except Exception as exc:
@@ -69,6 +72,8 @@ def run(path, directory, stop, remote=None):
                     ready = time.time()
                     if ready >= start+300:
                         score, detail = None, "Inferencia terminada después del cierre"
+                    elif score is not None and ready > start+15:
+                        detail = "Disponible para evaluación · resultado posterior a los primeros 15 s"
                     with db:
                         db.execute("INSERT OR IGNORE INTO laya_predictions VALUES(?,?,?,?)",
                                    (start,ready,score,detail))
@@ -77,7 +82,7 @@ def run(path, directory, stop, remote=None):
                         message = "Predicción experimental de Laya" if score is not None else detail
                         db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
                                    (start,ready,"Laya","Supervisor",message,json.dumps(evidence)))
-                    status(source + " · " + detail)
+                    status(source + " · " + detail, "ok" if score is not None else "error", score is not None)
             remaining = 300-time.time()%300
             stop.wait(min(0.4 if now-start < 15 else 10, remaining))
 

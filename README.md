@@ -55,6 +55,16 @@ La línea verde muestra el contrato Up del intervalo activo y la segunda línea 
 
 El modo local anterior se activa explícitamente con `--modelo-local qwen3.5:4b` para el supervisor o `--laya-local` para el predictor. Solo este último necesita instalar `laya==0.5.0` y ejecutar `python laya_shadow.py` para preparar los pesos.
 
+### Observaciones de esta etapa
+
+- El panel muestra el estado de Polymarket, Laya y el supervisor, junto con la hora de su última respuesta correcta. Un error posterior conserva esa hora para identificar datos antiguos.
+- El acceso al servidor de tu maestro requiere estar conectado a su red local o a una VPN que permita llegar a ese servidor. Cuando se pierde esa conexión, el colector público de Polymarket sigue trabajando. El supervisor reintenta tras 30 segundos; Laya vuelve a intentarlo en la siguiente apertura con datos válidos.
+- La etapa actual registra decisiones y operaciones simuladas. La autenticación de Polymarket para compras y ventas reales se integrará después de validar las señales y los límites de operación.
+- Una puntuación de Laya es un resultado experimental. El panel presenta acierto y Brier por origen (local o remoto), usando las resoluciones oficiales y la referencia del libro sobre los mismos intervalos. Brier mide el error cuadrático de la puntuación y disminuye cuando mejora la estimación. Las muestras pequeñas necesitan más observación para evaluar la estabilidad.
+- Las predicciones que llegan después de los primeros 15 segundos quedan identificadas para análisis. La línea aparece desde su hora real de recepción. Las solicitudes que terminan después del cierre quedan sin puntuación.
+- La gráfica recibe muestras REST del contrato Up aproximadamente cada cinco segundos y deja huecos cuando faltan datos. Cada intervalo conserva su pronóstico de apertura.
+- El modo remoto arranca con la biblioteca estándar y carga el pequeño MLP únicamente cuando hay datos suficientes para entrenarlo. Qwen y Laya locales requieren activación explícita. El proceso debe permanecer encendido para observar los mercados.
+
 ### Señal, entrenamiento y compras
 
 El agente consulta por REST el libro Up del **próximo** mercado cada 4–10 segundos. En la apertura congela las últimas lecturas recibidas antes del corte y calcula precio medio, spread, desequilibrio de tamaños, cambio del precio medio y su volatilidad. Requiere dos observaciones separadas por al menos cinco segundos y una cotización final de hasta 24 segundos. Una apertura perdida queda registrada como abstención. El resultado se confirma después por Gamma contrastando pago binario, estado final, precio de referencia y precio final.

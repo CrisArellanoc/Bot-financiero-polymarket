@@ -3,6 +3,7 @@ from contextlib import closing
 import json
 import sqlite3
 import time
+import service_status
 from urllib.error import URLError
 from urllib.request import build_opener, HTTPRedirectHandler, ProxyHandler, Request
 
@@ -103,9 +104,10 @@ def tables(db):
         db.execute("ALTER TABLE local_notes ADD COLUMN revision INTEGER DEFAULT 1")
 
 
-def status(db, model, detail):
+def status(db, model, detail, state="waiting", success=False):
     with db:
         db.execute("INSERT OR REPLACE INTO observer_status VALUES(1,?,?,?)", (time.time(), model, detail))
+    service_status.record(db, "supervisor", state, detail, success)
 
 
 def next_evidence(db, now):
@@ -144,7 +146,7 @@ def observe(path, model, stop, remote=None):
                     delay = 4
                     continue
                 start, through, evidence = pending
-                status(db, model, "Analizando intervalo")
+                status(db, model, "Analizando intervalo", "busy")
                 if remote:
                     level, summary = remote.explain(evidence)
                     model = "Remoto · " + remote.name
@@ -153,10 +155,10 @@ def observe(path, model, stop, remote=None):
                 with db:
                     db.execute("INSERT OR REPLACE INTO local_notes VALUES(?,?,?,?,?,?,?)",
                                (start, through, time.time(), model, level, summary, REVISION))
-                status(db, model, "Seguimiento activo")
+                status(db, model, "Seguimiento activo", "ok", success=True)
                 delay = 10
             except (URLError, OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
-                status(db, model, f"Reintentará en 30 s · {exc}")
+                status(db, model, f"Reintentará en 30 s · {exc}", "error")
                 delay = 30
 
 
@@ -166,6 +168,9 @@ def health_event(db, now):
     beat = db.execute("SELECT at FROM heartbeat WHERE id=1").fetchone()
     freshness = "sin cotización" if tick is None else f"última cotización hace {max(0,int(now-tick))} s"
     activity = "iniciando" if not beat else f"última actividad del bot hace {max(0,int(now-beat[0]))} s"
+    problems = db.execute("SELECT service,detail FROM service_status WHERE state IN ('error','unconfigured')").fetchall()
+    details = " · ".join(f"{name} · {detail}" for name, detail in problems)
     with db:
         db.execute("INSERT INTO trace(start,at,source,target,message,payload) VALUES(?,?,?,?,?,?)",
-                   (start,now,"Monitor","Supervisor",f"Control periódico: {freshness}, {activity}", "{}"))
+                   (start,now,"Monitor","Supervisor",f"Control periódico · {freshness}, {activity}" +
+                    (" · " + details if details else ""), "{}"))

@@ -99,6 +99,12 @@
         background: var(--panel);
         padding: 18px;
       }
+      .connections {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 14px;
+      }
+      .attention { color: var(--amber); }
       .metric strong {
         display: block;
         font:
@@ -228,7 +234,7 @@
           <small>POLYMARKET &nbsp;/&nbsp; BTC · 5 MIN</small>
           <h1>Monitor del agente</h1>
         </div>
-        <div><div class="tag">Simulación local</div></div>
+        <div><div class="tag">Etapa 1 · Simulación</div></div>
       </header>
       <section class="bar">
         <span id="health" role="status">Conectando con el agente…</span
@@ -239,6 +245,7 @@
           </select></label
         >
       </section>
+      <section id="connections" class="connections" aria-label="Estado de las conexiones"></section>
       <section class="metrics" aria-label="Resultados acumulados">
         <div class="metric"><small>Saldo virtual</small><strong id="cash">—</strong></div>
         <div class="metric"><small>Ganancia realizada</small><strong id="pnl">—</strong></div>
@@ -277,6 +284,7 @@
           <h2>Aprendizaje prospectivo</h2>
           <p id="learning"></p>
           <small id="comparison"></small><p id="shadowMetrics" class="muted"></p>
+          <div id="sourceMetrics" class="stack"></div>
           <details id="validation">
             <summary>Validación del último candidato</summary>
             <pre id="report"></pre>
@@ -367,7 +375,27 @@
         add("text",{x:588,y:166,fill:"#afbec4","text-anchor":"end","font-size":14},local(s.focus+300))
 
       }
+      function connections(s) {
+        const root = el("connections")
+        root.replaceChildren()
+        const names = {polymarket:"Datos de Polymarket",laya:"Predicción de Laya",supervisor:"Verificación del modelo"}
+        const states = {waiting:"En espera",busy:"Procesando",ok:"Última respuesta correcta",
+          error:"Conexión con incidencia",unconfigured:"Configuración pendiente"}
+        for (const item of s.services ?? []) {
+          let label = states[item.state] ?? item.state
+          const stale = (item.service === "polymarket" && item.state === "ok" && Date.now()/1000-item.at > 20) ||
+            (item.service === "supervisor" && Date.now()/1000-item.at > 100)
+          if (stale) label = "Sin actualización reciente"
+          const card = node("article", null, "stack")
+          card.append(node("h3", names[item.service]),
+            node("p", label, stale || ["error","unconfigured"].includes(item.state) ? "attention" : ""),
+            node("small",item.detail),
+            node("p",item.last_ok ? "Última respuesta correcta · "+local(item.last_ok,true) : "Esperando primera respuesta","muted"))
+          root.append(card)
+        }
+      }
       function render(s) {
+        connections(s)
         const w = el("window"),
           selected = w.value
         w.replaceChildren(new Option("Actual", ""))
@@ -398,6 +426,8 @@
         set("interval", local(s.focus, true))
         chart(s)
         set("layaSignal", s.laya?.p != null ? s.laya.source + " · " + (s.laya.p >= .5 ? "Up" : "Down") + " · puntuación Up " + pct(s.laya.p) : "Laya · " + (s.laya?.detail ?? s.laya_status))
+        if (s.laya?.p != null && s.laya.ready > s.focus+15)
+          set("layaSignal",el("layaSignal").textContent+" · llegó después de los primeros 15 s")
         set(
           "signal",
           f?.p == null
@@ -428,6 +458,16 @@
         set("shadowMetrics", "Acierto sobre " + comp.n + " intervalos comunes: Laya " + pct(comp.laya) +
           " / libro " + pct(comp.book) + ". Con MLP disponible (" + comp.mlp_n + "): Laya " +
           pct(comp.laya_shared) + " / MLP " + pct(comp.mlp) + ".")
+        const sources = el("sourceMetrics")
+        sources.replaceChildren()
+        for (const result of s.comparison_by_source ?? []) {
+          const box = node("div")
+          box.append(node("h3",result.source+" · "+result.n+" resultados"),
+            node("p","Acierto Laya "+pct(result.accuracy)+" / libro "+pct(result.book_accuracy)),
+            node("small","Brier Laya "+result.brier.toFixed(3)+" / libro "+result.book_brier.toFixed(3)+
+              " (menor es mejor) · "+result.delayed+" respuestas después de 15 s"))
+          sources.append(box)
+        }
         const t = s.last_tick
         set(
           "last",

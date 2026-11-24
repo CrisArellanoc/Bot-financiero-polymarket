@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 import live_model as ml
 import local_observer
 import laya_shadow
+import service_status
 from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
 from settings import load_settings
 from autonomy import Limits, PaperLedger, number
@@ -131,8 +132,9 @@ def chart_feed(path, stop):
                 if start <= ts and seen < start+300:
                     with db:
                         db.execute("INSERT INTO chart_prices VALUES(?,?,?)", (start,seen,float(value)))
-            except API_ERRORS:
-                pass  # Los huecos de captura se muestran en la gráfica.
+                    service_status.record(db, "polymarket", "ok", "Cotización pública recibida", success=True)
+            except API_ERRORS as exc:
+                service_status.record(db, "polymarket", "error", f"Lectura pendiente · {exc}")
             stop.wait(min(5, 300-time.time()%300))
 
 
@@ -158,6 +160,7 @@ class Agent:
             CREATE TABLE IF NOT EXISTS heartbeat(id INTEGER PRIMARY KEY CHECK(id=1), at REAL, detail TEXT);
         """)
         local_observer.tables(self.db)
+        service_status.initialize(self.db)
         self.next_view = None
         self.last_maintenance = 0
 
@@ -342,7 +345,21 @@ def snapshot(path, selected=None):
             avg(CASE WHEN f.version LIKE 'MLP-%' THEN ((l.p>=0.5)=(f.winner='Up')) END) AS laya_shared
             FROM laya_predictions l JOIN forecasts f USING(start) WHERE l.p IS NOT NULL AND f.winner IS NOT NULL""")[0]
         state = db.execute("SELECT detail FROM laya_status").fetchone()
+        services = rows("""SELECT service,state,at,last_ok,detail FROM service_status
+            ORDER BY CASE service WHEN 'polymarket' THEN 0 WHEN 'laya' THEN 1 ELSE 2 END""")
+        by_source = rows("""SELECT coalesce(s.model,'Laya local') AS source, count(*) AS n,
+            avg((l.p>=0.5)=(f.winner='Up')) AS accuracy,
+            avg((json_extract(f.x,'$[0]')>=0.5)=(f.winner='Up')) AS book_accuracy,
+            avg((l.p-(f.winner='Up'))*(l.p-(f.winner='Up'))) AS brier,
+            avg((json_extract(f.x,'$[0]')-(f.winner='Up'))*
+                (json_extract(f.x,'$[0]')-(f.winner='Up'))) AS book_brier,
+            sum(l.ready>l.start+15) AS delayed
+            FROM laya_predictions l JOIN forecasts f USING(start)
+            LEFT JOIN laya_sources s USING(start)
+            WHERE l.p IS NOT NULL AND f.winner IS NOT NULL
+            GROUP BY coalesce(s.model,'Laya local') ORDER BY source""")
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
+                    services=services,comparison_by_source=by_source,mode="paper",
                     prices=prices,laya=next(iter(prediction),None),comparison=comparison,
                     laya_status=state[0] if state else "Esperando inicio",
                     observer=next(iter(observer), None), notes=notes,
@@ -433,6 +450,7 @@ def serve(args, config):
                    daemon=True).start()
         except RemoteModelError as exc:
             local_observer.status(agent.db, "Supervisor remoto", str(exc))
+            service_status.record(agent.db, "supervisor", "unconfigured", str(exc))
     Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
     try:
         predictor = None if args.laya_local else RemoteLaya.from_env(config)
@@ -440,6 +458,7 @@ def serve(args, config):
     except RemoteModelError as exc:
         with agent.db:
             agent.db.execute("INSERT OR REPLACE INTO laya_status VALUES(1,?)", (str(exc),))
+        service_status.record(agent.db, "laya", "unconfigured", str(exc))
     print(f"Monitor Paper en http://127.0.0.1:{server.server_port}  |  Ctrl+C para detener", flush=True)
     try:
         while True:
