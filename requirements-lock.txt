@@ -6,3 +6,4 @@ scikit-learn==1.9.1
 scipy==1.18.1
 threadpoolctl==3.8.0
 xgboost==3.4.1
+websocket-client==1.9.2

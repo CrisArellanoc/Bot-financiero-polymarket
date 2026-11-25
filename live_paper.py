@@ -164,6 +164,7 @@ class Agent:
         local_observer.tables(self.db)
         service_status.initialize(self.db)
         yahoo_predictor.tables(self.db)
+        btc_reference.feed_status(self.db,"waiting","Esperando el TWAP de Polymarket")
         self.next_view = None
         self.last_maintenance = 0
 
@@ -356,7 +357,8 @@ def snapshot(path, selected=None):
         yahoo_forecast = rows("SELECT start,ready,p,model,detail FROM yahoo_predictions WHERE start=?",(focus,))
         yahoo_status = rows("SELECT at,detail FROM yahoo_status WHERE id=1")
         btc = dict(target=next(iter(rows("SELECT seen,price,source FROM btc_targets WHERE start=?",(focus,))),None),
-                   quotes=rows("SELECT ts,seen,price,source FROM btc_quotes WHERE ts>=? AND ts<? ORDER BY ts",(focus,focus+300)),
+                   quotes=rows("SELECT ts,seen,price,source FROM btc_twap_quotes WHERE ts>=? AND ts<? ORDER BY ts",(focus,focus+300)),
+                   feed=next(iter(rows("SELECT state,at,last_ok,detail FROM btc_feed_status WHERE id=1")),None),
                    forecast=next(iter(rows("SELECT ready,price,anchor,model,detail FROM yahoo_price_predictions WHERE start=?",(focus,))),None),
                    status=next(iter(rows("SELECT at,detail FROM btc_target_status WHERE id=1")),None))
         teacher = rows("SELECT service,state,at,last_ok FROM teacher_connections ORDER BY service")
@@ -476,6 +478,8 @@ def serve(args, config):
     Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
     Thread(target=yahoo_predictor.collect,args=(args.db,stop),daemon=True).start()
     Thread(target=btc_reference.collect,args=(args.db,stop),daemon=True).start()
+    btc_thread = Thread(target=btc_reference.stream,args=(args.db,stop),daemon=True)
+    btc_thread.start()
     try:
         predictor = None if args.laya_local else RemoteLaya.from_env(config)
         Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop,predictor), daemon=True).start()
@@ -503,6 +507,7 @@ def serve(args, config):
         pass
     finally:
         stop.set()
+        btc_thread.join(timeout=12)
         server.shutdown()
         server.server_close()
         agent.ledger.close()

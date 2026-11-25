@@ -22,7 +22,11 @@ La terminal organiza el mercado, la decisión simulada, la evaluación de modelo
 
 La vista principal compara tres líneas en USD. La referencia horizontal gris es `openPrice` publicado por Polymarket para el intervalo UTC exacto. Se consulta `https://polymarket.com/api/crypto/crypto-price` con `symbol=BTC`, `eventStartTime`, `endDate` y `variant=fiveminute`. Es un endpoint de su sitio web, sin contrato público de estabilidad. Se conserva el primer valor válido junto con la hora de recepción. Si falta o falla, la interfaz informa que está pendiente.
 
-La curva naranja usa la cotización BTC-USD de Yahoo, consultada aproximadamente cada diez segundos. Muestra la hora de la fuente y avisa de cotizaciones antiguas. No replica exactamente Chainlink. El flujo de referencia de Chainlink en Polymarket requiere credenciales CLOB y una clave adicional de Chainlink según la [documentación oficial de PolyBolt](https://docs.polymarket.com/migrate/rtds-to-polybolt.md). Esta versión utiliza solo fuentes públicas, sin autenticar operaciones.
+La curva naranja recibe BTC/USD por una conexión WebSocket pública a `wss://ws-live-data.polymarket.com`, tema `crypto_prices_twap_sixty`, símbolo `btc/usd` y ventana de 60 segundos. Usa el TWAP de Chainlink que distribuye Polymarket para estos mercados, no la cotización spot de Yahoo ni el precio del contrato Up. El monitor actualiza la pantalla cada dos segundos, conserva las muestras de la fuente y muestra su hora y estado de conexión. Yahoo permanece como historial del modelo, fuera del canal de cotización visual.
+
+La prueba directa del 24 de noviembre de 2026 confirmó que este RTDS público aún entrega instantáneas y actualizaciones sin claves. Es una ruta heredada: la [documentación de migración de Polymarket](https://docs.polymarket.com/migrate/rtds-to-polybolt.md) anuncia su retirada y exige credenciales CLOB y Chainlink para su sucesora PolyBolt. Esta versión no intenta evadir la autenticación del servicio nuevo. Si RTDS deja de entregar cotizaciones, muestra la incidencia y reconecta con espera creciente hasta 30 segundos. No cambia silenciosamente a Yahoo, spot u otro proveedor.
+
+El cliente `websocket-client` es una dependencia ligera de Python. Mantiene una conexión con TLS verificado, envía un latido cada cinco segundos y reconecta ante cierre o falta de datos recientes. Valida símbolo, ventana, tiempo y precisión E18. Guarda hasta 24 horas en `btc_twap_quotes`. Los registros anteriores de Yahoo se conservan en su tabla original y no entran en la gráfica. Las claves del profesor no se envían a Polymarket.
 
 La línea morada es una estimación fija del cierre BTC-USD producida por un segundo MLP de regresión de 16 y 8 neuronas, independiente del clasificador Up/Down. Predice el retorno logarítmico desde el último cierre Yahoo admitido hasta el cierre objetivo. La base es conocida cinco minutos antes de abrir y el horizonte total desde esa base es de diez minutos. La predicción se congela en los primeros 15 segundos y se dibuja desde su emisión hasta el cierre, sin inventar una trayectoria futura. Usa los mismos datos temporales y controles de disponibilidad que el clasificador. La probabilidad Up no se convierte en dólares. Las probabilidades del contrato, Laya y el clasificador Yahoo se conservan en un panel desplegable con escala porcentual.
 
@@ -46,9 +50,9 @@ Para descargar hasta 60 días, auditar los datos y entrenarlo, ejecuta desde la 
 .\.venv\Scripts\python.exe yahoo_predictor.py
 ```
 
-Reutiliza las dependencias de entrenamiento de `requirements-lock.txt`. La descarga y la inferencia en vivo usan la biblioteca estándar. El ajuste se ejecuta una vez en un proceso independiente y limita el cálculo numérico a un hilo. Guarda pesos, reporte y pronósticos en `data/live_paper.sqlite` y conserva la captura original de Yahoo dentro de `data/`, excluida de Git.
+Reutiliza las dependencias de entrenamiento de `requirements-lock.txt`. La descarga y la inferencia en vivo usan la biblioteca estándar. La cotización del gráfico viaja por una conexión distinta, directamente desde Polymarket. El ajuste se ejecuta una vez en un proceso independiente y limita el cálculo numérico a un hilo. Guarda pesos, reporte y pronósticos en `data/live_paper.sqlite` y conserva la captura original de Yahoo dentro de `data/`, excluida de Git.
 
-Reinicia `live_paper.py` después de actualizar el código. El bot consulta las velas completas y la cotización Yahoo aproximadamente cada diez segundos, calcula el pronóstico al abrir cada mercado y muestra una línea morada junto al precio del contrato y a Laya. Solo utiliza entradas recibidas antes de la apertura y una versión del modelo que ya existiera en ese instante. Ante huecos, datos tardíos o un modelo de más de siete días, registra una abstención. Repite el comando de entrenamiento para actualizar el modelo.
+Reinicia `live_paper.py` después de actualizar el código. El bloque histórico consulta velas completas de Yahoo aproximadamente cada minuto para las entradas del modelo entrenado con esa fuente, calcula el pronóstico al abrir cada mercado y muestra una línea morada junto al precio del contrato y a Laya. Solo utiliza entradas recibidas antes de la apertura y una versión del modelo que ya existiera en ese instante. Ante huecos, datos tardíos o un modelo de más de siete días, registra una abstención. Repite el comando de entrenamiento para actualizar el modelo.
 
 El entrenamiento usa un corte temporal fijo de 60% para ajustar, 20% para calibrar probabilidades y 20% para evaluar. La etiqueta histórica es cierre mayor o igual a apertura de la vela Yahoo. El informe conserva acierto, Brier y referencias de mayoría y persistencia. La disponibilidad histórica es una hipótesis basada en velas cerradas y el margen temporal, pues el historial descargado no demuestra su fecha original de publicación.
 
@@ -194,7 +198,7 @@ python -m venv .venv
 node tests/test_market_chart.cjs
 ```
 
-REST y componentes Paper usan biblioteca estándar; entrenamiento requiere las dependencias del archivo de versiones. El capturador WebSocket requiere Node.js 22+.
+REST y componentes Paper usan biblioteca estándar; el TWAP en vivo requiere `websocket-client` y el entrenamiento requiere las dependencias del archivo de versiones. El capturador WebSocket requiere Node.js 22+.
 
 ## Datos públicos
 

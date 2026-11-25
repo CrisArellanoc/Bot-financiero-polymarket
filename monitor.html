@@ -539,7 +539,7 @@
           </div>
           <div class="chart-values">
             <div><small>Precio a superar · Polymarket</small><strong id="btcTarget">—</strong></div>
-            <div><small>BTC actual · Yahoo</small><strong id="btcCurrent">—</strong></div>
+            <div><small>BTC actual · Polymarket</small><strong id="btcCurrent">—</strong></div>
             <div>
               <small>MLP · Estimación del cierre</small><strong id="btcPrediction">—</strong>
             </div>
@@ -552,7 +552,7 @@
           ></svg>
           <div class="legend">
             <small><i style="background: #a5afbc"></i>Precio a superar</small>
-            <small><i style="background: #ffa513"></i>BTC-USD · Yahoo</small>
+            <small><i style="background: #ffa513"></i>Polymarket · TWAP 60 s</small>
             <small><i style="background: #d4a3ff"></i>Cierre estimado · MLP Yahoo</small>
           </div>
           <p id="btcStatus" class="section-note"></p>
@@ -788,7 +788,7 @@
             latest &&
             this.focus === state.focus &&
             latest.seen > previous.seen &&
-            latest.seen - previous.seen <= (this.usd ? 75 : 18) &&
+            latest.seen - previous.seen <= (this.usd ? 8 : 18) &&
             state.prices.filter((row) => row.seen > previous.seen).length === 1 &&
             state.focus === state.current &&
             !document.hidden &&
@@ -914,7 +914,7 @@
               area += segment + ` L ${x(previous.seen)} ${bottom} L ${x(first.seen)} ${bottom} Z `
           }
           for (const row of rows) {
-            if (!previous || row.seen - previous.seen > (this.usd ? 75 : 18)) {
+            if (!previous || row.seen - previous.seen > (this.usd ? 8 : 18)) {
               closeArea()
               first = row
               segment = `M ${x(row.seen)} ${y(row.price)}`
@@ -943,7 +943,7 @@
             this.guide.setAttribute("x2", right)
             this.guide.setAttribute("y1", y(last.price))
             this.guide.setAttribute("y2", y(last.price))
-            const stale = Date.now() / 1000 - this.rows.at(-1).seen > 18
+            const stale = Date.now() / 1000 - this.rows.at(-1).seen > (this.usd ? 10 : 18)
             this.halo.style.display = stale ? "none" : ""
           }
           const target = this.usd ? this.reference?.price : null
@@ -1000,6 +1000,7 @@
             monitor: [840, 230, "Monitor", "Interfaz local"],
           }
           this.alias = {
+            "Polymarket BTC": "market",
             CLOB: "market",
             Gamma: "market",
             Datos: "market",
@@ -1016,6 +1017,7 @@
             Monitor: "monitor",
           }
           this.paths = {
+            "market/monitor": "M160 80 C270 -15 940 30 840 250",
             "market/book": "M160 87 C185 87 195 87 220 87",
             "book/model": "M360 87 C385 87 395 87 420 87",
             "book/laya": "M360 87 C395 87 385 187 420 187",
@@ -1294,6 +1296,16 @@
               },
             })
           }
+          const btcQuote = s.btc?.quotes?.at(-1)
+          if (s.focus === s.current && btcQuote)
+            this.messages.push({
+              key: "btc-" + btcQuote.ts,
+              at: btcQuote.seen,
+              source: "Polymarket BTC",
+              target: "Monitor",
+              message: "BTC/USD · Chainlink TWAP 60 s recibido",
+              payload: { price: btcQuote.price, source: btcQuote.source, timestamp: btcQuote.ts },
+            })
           for (const note of s.notes ?? [])
             this.messages.push({
               key: "note-" + note.at,
@@ -1384,26 +1396,30 @@
         set("btcTarget", usd(btc.target?.price))
         set("btcCurrent", usd(lastBtc?.price))
         set("btcPrediction", usd(priceForecast?.price))
-        const staleBtc = lastBtc && s.focus === s.current && Date.now() / 1000 - lastBtc.ts > 45
+        const staleBtc = lastBtc && s.focus === s.current && Date.now() / 1000 - lastBtc.ts > 10
         set(
           "btcStatus",
           (lastBtc
-            ? (staleBtc ? "Cotización sin actualización reciente · " : "Cotización Yahoo · ") +
-              local(lastBtc.ts)
-            : "Esperando una cotización reciente de BTC-USD.") +
+            ? (staleBtc
+                ? "Cotización sin actualización reciente · "
+                : "Polymarket · TWAP 60 s · ") + local(lastBtc.ts)
+            : "Esperando el flujo BTC de Polymarket.") +
             (btc.target
               ? " · Referencia Polymarket recibida " + local(btc.target.seen)
               : " · Precio a superar pendiente de publicación."),
         )
         set(
           "btcSource",
-          "BTC actual y cierre estimado usan Yahoo, pueden diferir de Chainlink en Polymarket. " +
+          "BTC actual: Polymarket / Chainlink TWAP 60 s. Estimación del cierre: MLP entrenado con velas Yahoo, una fuente distinta. " +
             (priceForecast?.price != null
               ? "Estimación fija emitida " +
                 local(priceForecast.ready) +
                 " para el cierre del intervalo."
               : "Estimación en USD pendiente: requiere entrenar el regresor y esperar una nueva apertura con datos válidos."),
         )
+        if (s.focus === s.current && btc.feed && btc.feed.state !== "ok")
+          set("btcStatus", el("btcStatus").textContent + " · " + btc.feed.detail)
+        el("btcStatus").classList.toggle("attention", !!staleBtc || btc.feed?.state === "error")
         btcChart.update(s)
         const rows = s.prices,
           forecast = s.laya
@@ -1469,7 +1485,7 @@
         const root = el("connections")
         root.replaceChildren()
         const names = {
-          polymarket: "Datos de Polymarket",
+          polymarket: "Libro de Polymarket",
           laya: "Predicción de Laya",
           supervisor: "Verificación del modelo",
         }

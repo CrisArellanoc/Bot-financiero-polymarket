@@ -47,17 +47,67 @@ class ReferenceTests(unittest.TestCase):
                 self.assertIsNone(snapshot(path,3300)["btc"]["target"])
             finally: agent.ledger.close()
 
-    def test_stale_or_wrong_symbol_quotes_are_not_current(self):
+    def test_twap_rejects_wrong_source_symbol_window_and_stale_prices(self):
+        base={"topic":btc.TOPIC,"type":"update","payload":{
+            "symbol":"btc/usd","window_s":60,"timestamp":3001000,
+            "value":60000.125,"full_accuracy_value":"60000125000000000000000"}}
+        points=btc.twap_points(base,3005)
+        self.assertEqual(points[0][:4],(3001,3005,60000.125,btc.QUOTE_SOURCE))
+        self.assertEqual(points[0][4],"60000.125")
+        for changes in ({"symbol":"eth/usd"},{"window_s":30},{"value":1},
+                        {"timestamp":2700000},{"timestamp":3010000},
+                        {"full_accuracy_value":"NaN"},{"full_accuracy_value":"1e999"}):
+            self.assertEqual(btc.twap_points({**base,"payload":{**base["payload"],**changes}},3005),[])
+        self.assertEqual(btc.twap_points({**base,"topic":"crypto_prices_chainlink"},3005),[])
+        self.assertEqual(btc.twap_points({**base,"topic":"Yahoo"},3005),[])
+
+    def test_snapshot_is_ordered_deduplicated_and_never_mixed_with_yahoo(self):
         with tempfile.TemporaryDirectory() as folder:
-            agent=Agent(Path(folder)/"paper.sqlite")
+            path=Path(folder)/"paper.sqlite"
+            agent=Agent(path)
             try:
-                quote=lambda ts,symbol="BTC-USD": {"chart":{"result":[{"meta":{
-                    "regularMarketPrice":60000.,"regularMarketTime":ts,"symbol":symbol}}]}}
-                self.assertFalse(yahoo.store_quote(agent.db,quote(2500),3005))
-                self.assertFalse(yahoo.store_quote(agent.db,quote(3001,"ETH-USD"),3005))
-                self.assertTrue(yahoo.store_quote(agent.db,quote(3001),3005))
-                self.assertTrue(yahoo.store_quote(agent.db,quote(3001),3006))
-                self.assertEqual(agent.db.execute("SELECT ts,seen,price FROM btc_quotes").fetchall(),[(3001,3005,60000)])
+                message={"topic":btc.TOPIC,"type":"subscribe","payload":{
+                    "symbol":"btc/usd","window_s":60,"data":[
+                        {"timestamp":3002000,"value":60002},
+                        {"timestamp":3001000,"value":60001}]}}
+                with agent.db:
+                    agent.db.execute("INSERT INTO btc_quotes VALUES(3003,3004,123,'Yahoo Finance BTC-USD')")
+                self.assertEqual(btc.store_twap(agent.db,message,3005),3002)
+                btc.store_twap(agent.db,message,3006)
+                data=snapshot(path,3000)["btc"]["quotes"]
+                self.assertEqual([r["price"] for r in data],[60001,60002])
+                self.assertTrue(all(r["source"]==btc.QUOTE_SOURCE for r in data))
+                self.assertTrue(all(r["seen"]==3005 for r in data))
+            finally: agent.ledger.close()
+
+    def test_stream_recovers_after_disconnect_and_stops_without_yahoo_fallback(self):
+        from threading import Event
+        import websocket
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"paper.sqlite"
+            agent=Agent(path)
+            stop=Event()
+            conn=Mock(connected=True)
+            conn.recv.side_effect=lambda: (stop.set() or json.dumps({"topic":btc.TOPIC,"type":"update",
+                "payload":{"symbol":"btc/usd","window_s":60,"timestamp":3001000,"value":60000}}))
+            try:
+                # First failure uses the retry wait, then a genuine accepted message.
+                with patch("websocket.create_connection",side_effect=[websocket.WebSocketException(),conn]) as connect, \
+                     patch("btc_reference.time.time",return_value=3002), \
+                     patch.object(stop,"wait",return_value=False) as wait:
+                    btc.stream(path,stop)
+                self.assertEqual(connect.call_count,2)
+                wait.assert_called_once_with(1)
+                self.assertNotIn("header",connect.call_args.kwargs)
+                self.assertEqual(connect.call_args.args,(btc.STREAM,))
+                sent=json.loads(conn.send.call_args_list[0].args[0])
+                self.assertEqual(sent["subscriptions"][0]["topic"],btc.TOPIC)
+                self.assertEqual(sent["subscriptions"][0]["filters"],'{"symbol":"btc/usd"}')
+                self.assertEqual(snapshot(path,3000)["btc"]["quotes"][0]["price"],60000)
+                state=snapshot(path,3000)["btc"]["feed"]
+                self.assertEqual(state["state"],"stopped")
+                self.assertEqual(state["last_ok"],3002)
+                conn.close.assert_called_once()
             finally: agent.ledger.close()
 
     def test_usd_forecast_uses_frozen_input_close_and_cannot_follow_new_prices(self):

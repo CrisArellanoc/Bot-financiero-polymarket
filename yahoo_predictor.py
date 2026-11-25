@@ -268,22 +268,6 @@ def price_prediction(weights, x, anchor):
     return anchor*math.exp(change)
 
 
-def store_quote(db, payload, observed):
-    try:
-        meta = payload["chart"]["result"][0]["meta"]
-        ts,price = float(meta["regularMarketTime"]),float(meta["regularMarketPrice"])
-        if meta["symbol"] != "BTC-USD" or not all(math.isfinite(v) for v in (ts,price)) or price <= 0:
-            raise ValueError()
-        if not observed-180 <= ts <= observed+10:
-            raise ValueError()
-    except (KeyError,TypeError,ValueError,IndexError):
-        return False
-    with db:
-        db.execute("INSERT OR IGNORE INTO btc_quotes VALUES(?,?,?,?)",(ts,observed,price,"Yahoo Finance BTC-USD"))
-        db.execute("DELETE FROM btc_quotes WHERE ts<?",(observed-2*86400,))
-    return True
-
-
 def collect(path, stop):
     with closing(sqlite3.connect(path,timeout=10)) as db:
         while not stop.is_set():
@@ -294,11 +278,10 @@ def collect(path, stop):
                 if not rows:
                     raise ValueError("Yahoo no devolvió velas completas")
                 store_candles(db,rows,now)
-                fresh = store_quote(db,payload,now)
-                status(db,"Velas BTC-USD actualizadas" + (" · cotización Yahoo recibida" if fresh else " · cotización actual pendiente"))
+                status(db,"Historial de velas Yahoo actualizado para el modelo")
             except (ValueError,OSError,KeyError,TypeError) as exc:
                 status(db,f"Actualización pendiente · {exc}")
-            stop.wait(10)
+            stop.wait(60)
 
 
 def main():
