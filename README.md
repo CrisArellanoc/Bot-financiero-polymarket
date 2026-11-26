@@ -1,231 +1,95 @@
-# Bot-financiero-polymarket
+# Bot BTC / Polymarket: LLM remoto y simulación
 
-Proyecto de predicción BTC Up/Down de cinco minutos, una predicción al inicio de cada intervalo, con objetivo de operación autónoma. La primera etapa operativa será simulada (Paper).
+El cerebro del bot es el LLM que se consulta mediante la API del profesor. Decide Up, Down o abstención al abrir cada mercado BTC de cinco minutos. El equipo local captura datos públicos, prepara indicadores deterministas, comprueba límites, mantiene la cartera simulada y muestra la interfaz. El arranque normal no entrena ni ejecuta los MLP históricos y no carga modelos locales.
 
-## Monitor en vivo y simulación
+## Arranque en PowerShell
 
-Desde la raíz del repositorio, con Python 3.12 y las dependencias de `requirements-lock.txt` en el entorno activo, ejecuta:
-
-```powershell
-python live_paper.py
-```
-
-Abre [el monitor local](http://127.0.0.1:8765). Déjalo corriendo para acumular intervalos y detén el proceso con Ctrl+C. Guarda cotizaciones, mensajes, pronósticos, etiquetas, modelos y cartera en `data/live_paper.sqlite`. Al reiniciar vuelve a la misma cartera. El selector permite explorar un intervalo anterior y desplegar los datos de cada mensaje. El notebook sigue siendo la entrada para el análisis histórico.
-
-### Red de comunicación del monitor
-
-La terminal organiza el mercado, la decisión simulada, la evaluación de modelos y la verificación del supervisor. Cada nodo tiene soma, núcleo y ramificaciones y representa un módulo de adquisición, predicción, riesgo o cartera. Los impulsos representan mensajes registrados, no activaciones internas de una red neuronal. Al recibir una cotización o un mensaje nuevo, ilumina su recorrido. Selecciona un nodo para filtrar sus mensajes o un mensaje para consultar su contenido.
-
-`Reproducir eventos` recorre el registro del intervalo seleccionado y lo identifica como reproducción. Los informes del supervisor aparecen como entregas a la interfaz. La visualización respeta movimiento reducido y detiene la reproducción al esconder la pestaña. Estas interacciones consultan los datos ya registrados.
-
-### Gráfica BTC en dólares y precio a superar
-
-La vista principal compara tres líneas en USD. La referencia horizontal gris es `openPrice` publicado por Polymarket para el intervalo UTC exacto. Se consulta `https://polymarket.com/api/crypto/crypto-price` con `symbol=BTC`, `eventStartTime`, `endDate` y `variant=fiveminute`. Es un endpoint de su sitio web, sin contrato público de estabilidad. Se conserva el primer valor válido junto con la hora de recepción. Si falta o falla, la interfaz informa que está pendiente.
-
-La curva naranja recibe BTC/USD por una conexión WebSocket pública a `wss://ws-live-data.polymarket.com`, tema `crypto_prices_twap_sixty`, símbolo `btc/usd` y ventana de 60 segundos. Usa el TWAP de Chainlink que distribuye Polymarket para estos mercados, no la cotización spot de Yahoo ni el precio del contrato Up. El monitor actualiza la pantalla cada dos segundos, conserva las muestras de la fuente y muestra su hora y estado de conexión. Yahoo permanece como historial del modelo, fuera del canal de cotización visual.
-
-La prueba directa del 24 de noviembre de 2026 confirmó que este RTDS público aún entrega instantáneas y actualizaciones sin claves. Es una ruta heredada: la [documentación de migración de Polymarket](https://docs.polymarket.com/migrate/rtds-to-polybolt.md) anuncia su retirada y exige credenciales CLOB y Chainlink para su sucesora PolyBolt. Esta versión no intenta evadir la autenticación del servicio nuevo. Si RTDS deja de entregar cotizaciones, muestra la incidencia y reconecta con espera creciente hasta 30 segundos. No cambia silenciosamente a Yahoo, spot u otro proveedor.
-
-El cliente `websocket-client` es una dependencia ligera de Python. Mantiene una conexión con TLS verificado, envía un latido cada cinco segundos y reconecta ante cierre o falta de datos recientes. Valida símbolo, ventana, tiempo y precisión E18. Guarda hasta 24 horas en `btc_twap_quotes`. Los registros anteriores de Yahoo se conservan en su tabla original y no entran en la gráfica. Las claves del profesor no se envían a Polymarket.
-
-La línea morada es una estimación fija del cierre BTC-USD producida por un segundo MLP de regresión de 16 y 8 neuronas, independiente del clasificador Up/Down. Predice el retorno logarítmico desde el último cierre Yahoo admitido hasta el cierre objetivo. La base es conocida cinco minutos antes de abrir y el horizonte total desde esa base es de diez minutos. La predicción se congela en los primeros 15 segundos y se dibuja desde su emisión hasta el cierre, sin inventar una trayectoria futura. Usa los mismos datos temporales y controles de disponibilidad que el clasificador. La probabilidad Up no se convierte en dólares. Las probabilidades del contrato, Laya y el clasificador Yahoo se conservan en un panel desplegable con escala porcentual.
-
-Ejecuta `yahoo_predictor.py` una vez para añadir el regresor a una instalación con pesos antiguos, reinicia `live_paper.py` y espera una nueva apertura válida. Los intervalos anteriores no se rellenan con predicciones retrospectivas. El sondeo y las gráficas no reentrenan el modelo en cada actualización.
-
-En el entrenamiento del 24 de noviembre de 2026, sobre 3,448 velas históricas de prueba, el regresor obtuvo MAE de 126.41 USD frente a 126.49 USD de mantener el último cierre conocido. La diferencia es mínima y no demuestra una ventaja operativa. La predicción en USD sigue siendo experimental y no modifica las reglas de compra.
-
-### Dos modelos en el servidor
-
-El modo predeterminado usa dos conexiones HTTPS independientes. Laya recibe las cinco variables congeladas al abrir el mercado, devuelve una puntuación Up experimental y deja constancia de cuándo estuvo disponible. El supervisor revisa los eventos del bot, incluida la predicción de Laya. Comprueba actividad cada pocos segundos y recibe un control periódico de cotización y actividad aproximadamente cada minuto mientras el proceso está funcionando. Selecciona los hechos relevantes y marca observación o atención. Las reglas deterministas y la cartera siguen gobernando las compras simuladas.
-
-El encabezado incluye una viñeta discreta «API del profesor». Se confirma con una respuesta del supervisor remoto validada durante esta ejecución. Verde significa confirmación reciente, ámbar una incidencia y gris ausencia de confirmación reciente. Al pasar el cursor muestra el estado y la hora de la última respuesta válida de cada módulo. La confirmación del supervisor caduca a los 120 segundos, la de Laya a los 360 segundos porque solo se consulta una vez por intervalo. Se conserva el último éxito al fallar y se exige una respuesta nueva después de reiniciar. Un modelo local no enciende esta confirmación. La viñeta comprueba respuestas recibidas, no garantiza disponibilidad futura ni valida la eficacia predictiva.
-
-### Predictor histórico de Yahoo Finance
-
-El proyecto incluye un MLP adicional con dos capas ocultas de 16 y 8 neuronas. Aprende de velas completas de BTC-USD a cinco minutos descargadas de Yahoo Finance. Usa 24 retornos, media, volatilidad, rango y volumen relativo. Separa la última vela utilizada del intervalo objetivo por cinco minutos para dar margen a su publicación.
-
-Para descargar hasta 60 días, auditar los datos y entrenarlo, ejecuta desde la carpeta del proyecto:
+Desde la carpeta que contiene `live_paper.py`:
 
 ```powershell
-.\.venv\Scripts\python.exe yahoo_predictor.py
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install websocket-client==1.9.2
+.\.venv\Scripts\python.exe live_paper.py --verificar-conexion
+.\.venv\Scripts\python.exe live_paper.py
 ```
 
-Reutiliza las dependencias de entrenamiento de `requirements-lock.txt`. La descarga y la inferencia en vivo usan la biblioteca estándar. La cotización del gráfico viaja por una conexión distinta, directamente desde Polymarket. El ajuste se ejecuta una vez en un proceso independiente y limita el cálculo numérico a un hilo. Guarda pesos, reporte y pronósticos en `data/live_paper.sqlite` y conserva la captura original de Yahoo dentro de `data/`, excluida de Git.
+Abre [el monitor local](http://127.0.0.1:8765/). Deja la terminal abierta. Ctrl+C detiene el programa; cerrar el navegador no lo detiene. Usa Ctrl+F5 tras actualizar el código. La cartera y su historial se conservan al reiniciar. Con el equipo apagado o el proceso cerrado no se capturan datos.
 
-Reinicia `live_paper.py` después de actualizar el código. El bloque histórico consulta velas completas de Yahoo aproximadamente cada minuto para las entradas del modelo entrenado con esa fuente, calcula el pronóstico al abrir cada mercado y muestra una línea morada junto al precio del contrato y a Laya. Solo utiliza entradas recibidas antes de la apertura y una versión del modelo que ya existiera en ese instante. Ante huecos, datos tardíos o un modelo de más de siete días, registra una abstención. Repite el comando de entrenamiento para actualizar el modelo.
+En una instalación nueva, clona [el repositorio](https://github.com/CrisArellanoc/Bot-financiero-polymarket), entra a su carpeta y crea el entorno con `py -m venv .venv` antes de instalar la dependencia. Se requiere Python 3.12 o superior y Git. Los componentes activos usan biblioteca estándar y el cliente WebSocket; las bibliotecas de aprendizaje automático de `requirements-lock.txt` se necesitan para reproducir la investigación histórica.
 
-El entrenamiento usa un corte temporal fijo de 60% para ajustar, 20% para calibrar probabilidades y 20% para evaluar. La etiqueta histórica es cierre mayor o igual a apertura de la vela Yahoo. El informe conserva acierto, Brier y referencias de mayoría y persistencia. La disponibilidad histórica es una hipótesis basada en velas cerradas y el margen temporal, pues el historial descargado no demuestra su fecha original de publicación.
+## API privada del profesor
 
-El monitor identifica la evaluación histórica BTC-USD y la evaluación prospectiva contra las resoluciones oficiales de Polymarket. Las métricas de esta última usan los mismos intervalos que la referencia del libro y se agrupan por versión del modelo. La señal Yahoo es experimental y su reporte conserva `paper_trading_approved=false`.
-
-[Referencia de datos intradía de yfinance](https://ranaroussi.github.io/yfinance/reference/api/yfinance.download.html)
-
-### Configuración privada en Windows
-
-Desde la carpeta que contiene `live_paper.py`, crea tu archivo privado una sola vez:
+Solo debes configurar una vez tu archivo privado:
 
 ```powershell
 if (!(Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
 notepad .env
 ```
 
-En `MODEL_API_KEY` pega la clave de acceso del workspace. Si las credenciales son distintas, usa `SUPERVISOR_API_KEY` y `LAYA_API_KEY`. Para el workspace Local IA configura las URLs HTTPS completas con el mismo origen del panel y estas rutas:
+El cerebro reutiliza `SUPERVISOR_API_URL`, `SUPERVISOR_MODEL` y `SUPERVISOR_API_KEY`, o la clave común `MODEL_API_KEY`. No necesita una clave nueva. `SUPERVISOR_API_URL` apunta a la ruta HTTPS completa de chat completions del servidor. `SUPERVISOR_MODEL` vacío descubre el identificador en `/v1/models`. Las llamadas del cerebro y del supervisor son independientes.
 
-| Variable | Valor |
-| --- | --- |
-| SUPERVISOR_API_URL | Origen del panel seguido de `/v1/chat/completions` |
-| SUPERVISOR_MODEL | Vacío para usar el primer identificador que devuelva `/v1/models`, o elige uno explícitamente |
-| LAYA_API_URL | Origen del panel seguido de `/api/v1/laya/agent` |
-| LAYA_API_FORMAT | `workspace` (estado de texto y pregunta binaria). Para servidores Jev nativos también se admite `systemone`; para chat compatible usa `chat` y define `LAYA_MODEL`. |
-| MODEL_CA_FILE | Si el servidor usa una CA privada, ruta al certificado público de esa CA en formato PEM obtenido de su administrador. Vacío utiliza la confianza del sistema. |
+Laya usa `LAYA_API_URL`, `LAYA_API_FORMAT=workspace` y la clave común o `LAYA_API_KEY`. Es un observador remoto adicional; no sustituye la decisión del LLM ni los límites de la cartera. Se conserva el supervisor remoto para revisar los eventos. `--verificar-conexion` prueba las tres funciones con datos de ejemplo sin apostar.
 
+Conéctate a la red del profesor o a una VPN autorizada. El cliente verifica TLS y no reenvía claves en redirecciones. Si el servidor tiene una CA privada, configura `MODEL_CA_FILE` con la ruta al certificado PEM público de confianza entregado por su administrador. Las claves no se muestran en el panel, la auditoría ni los registros. `.env`, `data/`, `models/` y `.venv/` están excluidos de Git. Nunca pongas claves de Polymarket o billeteras en las variables del profesor.
 
-Si Windows o Python indican que la autoridad certificadora del servidor es desconocida, solicita al administrador el certificado público de su CA en formato PEM y guarda la ruta absoluta en `MODEL_CA_FILE`. Este archivo permite verificar la identidad del servidor al enviar la clave. La prueba autenticada quedará pendiente hasta completar la clave y la confianza TLS.
+## Decisión y ejecución simulada
 
-El supervisor solicita una respuesta JSON con las opciones del monitor. El cliente también admite un único bloque Markdown de JSON y verifica que las referencias pertenezcan a los eventos enviados. Una respuesta cortada por el límite de generación aparece como error explícito.
+1. Se reciben el libro del mercado próximo, el precio a superar oficial y el TWAP de BTC de Polymarket. Al abrir se conservan entradas disponibles antes del corte y la referencia publicada al inicio. Si la referencia aún no llegó se espera dentro del plazo inicial.
+2. Se envían al LLM los indicadores del libro, el TWAP, la referencia, el presupuesto y hasta ocho resultados oficiales previos. Los datos congelados y su hash se guardan antes de llamar a la API.
+3. El LLM responde JSON con acción, puntuación Up, justificación breve y referencias de evidencia. La respuesta se valida incluso si el servidor ignora el esquema. No se publica razonamiento interno. Su puntuación es subjetiva y no calibrada; el historial como contexto no cambia sus pesos ni constituye entrenamiento.
+4. Up/Down pasa a controles deterministas: ventana inicial de 15 segundos, estado y reglas del mercado, antigüedad del libro hasta 12 segundos, spread hasta 0.05, liquidez, mínimo de participaciones y margen estimado después de comisiones de 0.03 por participación. Una respuesta tardía, inválida o ausente produce rechazo. Abstenerse es una decisión válida.
+5. Solo una compra simulada por mercado se registra con efectivo reservado. La liquidación espera un resultado oficial final de Gamma. Se registran costo, pago y ganancia o pérdida neta y se incorpora el resultado al contexto de consultas posteriores.
 
-Cada servicio tiene su tiempo de espera. `LAYA_TIMEOUT_SECONDS` vale 90 segundos por defecto y `SUPERVISOR_TIMEOUT_SECONDS` vale 30. Puedes ajustarlos entre 1 y 240 en `.env`. La espera adicional de Laya permite una carga inicial lenta en el servidor y conserva la hora real de recepción de la predicción.
+La simulación es experimental. Usar un LLM como cerebro no demuestra ventaja predictiva ni rentabilidad. No hay órdenes reales ni conexión autenticada de trading. La API de Polymarket se usa para lectura pública.
 
-Con la red privada o VPN conectada, prueba ambas rutas. Esta comprobación envía dos peticiones de inferencia con datos de ejemplo y muestra el estado por servicio. Después inicia el proceso y abre [el panel](http://127.0.0.1:8765). Reinicia el proceso tras editar las variables.
+## Apuesta fija del 3% del capital total
 
-```powershell
-.\.venv\Scripts\python.exe live_paper.py --verificar-conexion
-.\.venv\Scripts\python.exe live_paper.py
-```
+Capital contable = efectivo disponible + costo de posiciones pendientes. Equivale al capital inicial más resultados realizados; no incluye revalorización de posiciones abiertas. La cuenta nueva comienza con 100 USD virtuales. Una cuenta existente nunca se reinicia al actualizar.
 
-El agente pide a Polymarket datos públicos por Gamma y CLOB. El modo Paper funciona sin clave de Polymarket. Conserva las credenciales privadas del exchange y de la billetera fuera de las variables de inferencia. [Autenticación de Polymarket](https://docs.polymarket.com/getting-started/api)
+Presupuesto = 3% del capital contable, redondeado hacia abajo al centavo. Con 100 USD corresponde a 3.00 USD; con 90 USD a 2.70 USD y con 103 USD a 3.09 USD. Las comisiones quedan dentro de ese importe. Se admite únicamente el residuo de redondear participaciones a seis decimales y comisión a cinco (como máximo 0.000012 USD), sin exceder el presupuesto.
 
-### Consumo local y gráfica
+No se sube ni reduce la apuesta para alcanzar mínimos: si el 3% no alcanza el mínimo de participaciones o la profundidad no permite cubrirlo completo, se rechaza y se explica. También se mantienen límites experimentales de exposición total de 30 USD y presupuesto diario de pérdida de 35 USD (UTC). Si el efectivo o los controles no alcanzan, no se apuesta. El 3% se vuelve a verificar dentro de la transacción de la cartera para evitar presupuestos desactualizados. La comprobación del margen utiliza la puntuación subjetiva del LLM, no una garantía económica.
 
-El proceso remoto de inferencia utiliza los recursos del servidor. En tu equipo siguen el colector, SQLite, el panel y el pequeño MLP que se reentrena por lotes. Para la inferencia remota se usa la biblioteca estándar de Python. El bot requiere estar ejecutándose, con acceso al servidor y a Internet. Para que siga observando con la computadora apagada, ejecútalo en un equipo siempre encendido.
+La fórmula de comisiones se verifica con los parámetros publicados de cada mercado; tarifas desconocidas bloquean el intento. Referencias: [comisiones](https://docs.polymarket.com/trading/fees), [mercados](https://docs.polymarket.com/market-data/market-details).
 
-La línea naranja muestra el contrato Up del intervalo activo y la segunda línea muestra la puntuación de Laya desde su hora de recepción. El panel consulta cada dos segundos cuando está visible. Conserva el historial de modelos locales anteriores. Las predicciones de Laya se evalúan con las resoluciones oficiales antes de plantear su uso en compras.
+## Panel, neuronas y pestaña lateral
 
-La curva usa una interpolación visual que pasa por cada cotización y permanece dentro del rango de sus extremos. El marcador se desplaza suavemente al llegar una nueva muestra. La animación se detiene al ocultar la pestaña y respeta la preferencia de movimiento reducido del navegador. La presentación utiliza las puntuaciones y cotizaciones originales guardadas para evaluar los modelos.
+La gráfica BTC en USD usa el TWAP de Chainlink de 60 segundos distribuido por Polymarket y su precio a superar. La puntuación Up del LLM y la de Laya se dibujan en una escala porcentual del contrato, separada de los dólares. La antigua regresión local no se dibuja como predicción activa en este modo.
 
-El modo local anterior se activa explícitamente con `--modelo-local qwen3.5:4b` para el supervisor o `--laya-local` para el predictor. Solo este último necesita instalar `laya==0.5.0` y ejecutar `python laya_shadow.py` para preparar los pesos.
+La red muestra Polymarket, libro, LLM remoto, riesgo, cartera, resultado oficial y evaluación. Cada neurona representa un módulo con soma, núcleo, dendritas y axón. Los impulsos corresponden a mensajes registrados; no son activaciones internas de la red del proveedor. Selecciona nodos o mensajes para consultar datos y decisiones. La reproducción histórica está identificada y respeta movimiento reducido.
 
-### Observaciones de esta etapa
+La pestaña lateral de apuestas se abre al recibir un intento nuevo o una actualización de su estado. Distingue preparando/pendiente, ejecutada en simulación, rechazada y abstención. Muestra capital, 3% objetivo, costo confirmado, lado, modelo, motivo y hashes. Una decisión Up no se presenta como compra ejecutada: la confirmación procede del recibo de la cartera.
 
-- El panel muestra el estado de Polymarket, Laya y el supervisor, junto con la hora de su última respuesta correcta. Un error posterior conserva esa hora para identificar datos antiguos.
-- El acceso al servidor de tu maestro requiere estar conectado a su red local o a una VPN que permita llegar a ese servidor. Cuando se pierde esa conexión, el colector público de Polymarket sigue trabajando. El supervisor reintenta tras 30 segundos; Laya vuelve a intentarlo en la siguiente apertura con datos válidos.
-- La etapa actual registra decisiones y operaciones simuladas. La autenticación de Polymarket para compras y ventas reales se integrará después de validar las señales y los límites de operación.
-- Una puntuación de Laya es un resultado experimental. El panel presenta acierto y Brier por origen (local o remoto), usando las resoluciones oficiales y la referencia del libro sobre los mismos intervalos. Brier mide el error cuadrático de la puntuación y disminuye cuando mejora la estimación. Las muestras pequeñas necesitan más observación para evaluar la estabilidad.
-- Las predicciones que llegan después de los primeros 15 segundos quedan identificadas para análisis. La línea aparece desde su hora real de recepción. Las solicitudes que terminan después del cierre quedan sin puntuación.
-- La gráfica recibe muestras REST del contrato Up aproximadamente cada dos segundos y deja huecos cuando faltan datos. Cada intervalo conserva su pronóstico de apertura.
-- El modo remoto arranca con la biblioteca estándar y carga el pequeño MLP únicamente cuando hay datos suficientes para entrenarlo. Qwen y Laya locales requieren activación explícita. El proceso debe permanecer encendido para observar los mercados.
+El historial conserva costo, pago, resultado neto y capital realizado. Victoria/pérdida se refiere al resultado neto después de costos. Las operaciones pendientes no cuentan como victorias. La interfaz muestra las últimas 200 apuestas e intentos y totales completos. Los eventos y recibos completos permanecen en SQLite. La viñeta del profesor muestra respuestas remotas recientes y los errores por servicio; no certifica eficacia predictiva.
 
-### Señal, entrenamiento y compras
+## Historial auditable
 
-El agente consulta por REST el libro Up del **próximo** mercado cada 4–10 segundos. En la apertura congela las últimas lecturas recibidas antes del corte y calcula precio medio, spread, desequilibrio de tamaños, cambio del precio medio y su volatilidad. Requiere dos observaciones separadas por al menos cinco segundos y una cotización final de hasta 24 segundos. Una apertura perdida queda registrada como abstención. El resultado se confirma después por Gamma contrastando pago binario, estado final, precio de referencia y precio final.
+Cada intento tiene enlaces a `/api/audit?start=APERTURA_UNIX`. También puedes abrir [la exportación completa](http://127.0.0.1:8765/api/audit) y guardarla como JSON desde el navegador. Incluye evidencia congelada, respuesta validada, propuesta, confirmación o rechazo, orden y resolución. Los importes contables se conservan como texto decimal.
 
-Durante la recopilación inicial, el pronóstico de referencia es el punto medio del libro Up. Al llegar a **288 pronósticos con etiqueta oficial** se ajusta un perceptrón multicapa (MLP) con dos capas ocultas de 16 y 8 neuronas. Cada 48 etiquetas nuevas vuelve a ajustar con hasta 2,016 ejemplos prospectivos. Entrenamiento, calibración sigmoidal y validación ocupan el 55%, 20% y 25% en orden temporal. Se purgan etiquetas que aún no eran públicas en el corte siguiente. Los 303 ejemplos históricos reservados pertenecen al experimento anterior.
+`audit_events` encadena recibos SHA-256; `chain_verified`, `decision_hashes_verified` y `receipts_verified` revisan su integridad y la concordancia con los registros de decisión y cartera. Esta verificación local detecta modificaciones, pero no es una firma externa ni impide que alguien con control completo de la base reescriba toda la cadena. Guarda exportaciones por separado si necesitas un testigo externo. Los registros anteriores a esta adaptación se conservan, pero no se inventan recibos retrospectivos (`audit_coverage=no_remote_receipt`).
 
-Para habilitar **compras experimentales simuladas**, el último MLP debe superar al punto medio del libro en acierto y en Brier (menor es mejor) en cada mitad de la validación. Una versión con más de siete días deja de ser elegible. El agente elige Up o Down por probabilidad calibrada y pide el libro ejecutable de ese lado. La cartera verifica las reglas del mercado, la antigüedad de la cotización, el mínimo de orden, la profundidad, el spread, las comisiones y la ventaja esperada. Los costos se calculan por nivel con la tarifa publicada para ese mercado. Los fills representan la liquidez mostrada en la consulta y pueden diferir de una ejecución real. [Mercados y restricciones](https://docs.polymarket.com/market-data/market-details) · [Comisiones](https://docs.polymarket.com/trading/fees)
+Un reinicio no repite consultas o apuestas de un mismo intervalo. Si se interrumpió una consulta, queda rechazada; si la compra ya estaba confirmada, se recupera su recibo. Las apuestas se mantienen hasta resolución en esta simulación.
 
-La cartera de demostración empieza con 100 USD virtuales. Cada intento es de 20 participaciones, con un costo máximo de 15 USD, exposición de hasta 30 USD y presupuesto diario de pérdida de 35 USD (UTC). Exige un margen neto de 0.03 USD por participación, spread máximo de 0.05 USD, libro de hasta 12 segundos y entrada en los primeros 15 segundos. Son parámetros del experimento. El tablero distingue el origen de cada pronóstico y muestra el acierto del MLP y del libro sobre los mismos mercados resueltos, junto al beneficio o pérdida realizada.
+## Datos en vivo
 
-### Relación con los capítulos de Kaabar
+Gamma y CLOB se consultan para mercados, libros y resultados. El precio a superar se obtiene del endpoint público del sitio `https://polymarket.com/api/crypto/crypto-price` con el intervalo UTC exacto; es una ruta sin contrato público de estabilidad.
 
-| Capítulo | Aplicación en este proyecto |
-| --- | --- |
-| 7 · Modelos clásicos | El notebook compara los nueve regresores históricos y conserva las métricas direccionales y de error. |
-| 8 · Redes para series temporales | El MLP regularizado aprende la dirección a partir de la ventana previa a la apertura. |
-| 9 · Validación y reentrenamiento | Cortes temporales, calibración separada, entrenamiento por lotes de etiquetas maduras y umbral de entrada después de costos. |
-| 10 · Aprendizaje por refuerzo | Se registran acción, abstención y recompensa realizada para estudiar decisiones secuenciales. La política de esta versión usa reglas deterministas. Un agente de RL sigue siendo investigación futura. |
-| 11 · Variables y visualización | El monitor muestra cambios, volatilidad del precio implícito del contrato y mensajes entre el libro, el modelo, el control de riesgo y la cartera. |
+El TWAP usa `wss://ws-live-data.polymarket.com`, tema `crypto_prices_twap_sixty`, filtro compacto `{"symbol":"btc/usd"}` y ventana de 60 segundos. Se validan símbolo, tiempos, precisión E18 y frescura. Una conexión recibe actualizaciones, envía latidos cada cinco segundos y reconecta con esperas hasta 30 segundos. La gráfica consulta cada dos segundos. Si falla, informa y deja huecos; no cambia a Yahoo.
 
-El umbral de elegibilidad y los parámetros de simulación son decisiones de diseño de este proyecto. [Índice de O’Reilly](https://www.oreilly.com/library/view/deep-learning-for/9781098148386/) · [Código oficial de Sofien Kaabar](https://github.com/sofienkaabar/deep-learning-for-finance)
+RTDS público se verificó en esta etapa, pero Polymarket ha anunciado su [migración a PolyBolt](https://docs.polymarket.com/migrate/rtds-to-polybolt.md), que requiere autenticación adicional. Los datos de Yahoo y sus modelos quedan como investigación previa y no se descargan ni ejecutan en el arranque operativo actual.
 
-## Estado al 17 de noviembre de 2026
+## Investigación anterior
 
-- REST y WebSocket públicos verificados; 26,163 eventos guardados en SQLite.
-- 2,015 mercados históricos resueltos auditados.
-- Nueve modelos del notebook y 60 configuraciones de optimización entrenados para investigación.
-- Mejor promedio exploratorio: 54.64%, frente a 51.99% de referencia, sin mejora consistente en los tres periodos.
-- 303 ejemplos finales siguen reservados. Ningún modelo está aprobado para comprar.
-- Componentes Paper probados; integración autónoma continua, calibración y reentrenamiento programado pendientes.
+`Analisis_modelos_BTC.ipynb` conserva las gráficas y métricas de nueve modelos y 60 configuraciones iniciales. Los modelos, capturas y reportes locales permiten reproducir esos experimentos con `training.py`, `optimize.py` y `yahoo_predictor.py`, instalando `requirements-lock.txt`. No se ejecutan automáticamente en el modo LLM.
 
-El protocolo DL y la meta de +20% fueron retirados por el usuario. El notebook se conserva como referencia inicial de modelos y métricas; el usuario autorizó optimizar ventanas, variables e hiperparámetros.
+El mejor promedio exploratorio inicial fue 54.64% frente a 51.99%, sin mejora estable en todos los periodos. El MLP de Yahoo obtuvo 51.80% sobre 3,448 velas históricas, que no demuestra rentabilidad en Polymarket. Los 303 ejemplos finales del experimento inicial siguen reservados. Los reportes antiguos describen su versión y no deben interpretarse como estado operativo actual. Referencia: [resultados de la etapa inicial](docs/RESULTADOS_ETAPA_2.md).
 
-## Documentación
-
-### Análisis visual en Jupyter / VS Code (entrada principal)
-
-Abre `Analisis_modelos_BTC.ipynb`. Incluye las seis gráficas, tablas, comparación de modelos y conclusiones dentro del archivo, con salidas ya guardadas. No necesitas ejecutar el notebook para leer los resultados actuales. Si el editor pide confiar en el archivo, revisa su origen y márcalo como confiable para visualizar las salidas HTML/SVG locales.
-
-Para actualizarlo, selecciona el kernel `.venv` y ejecuta las celdas en orden. Si no aparece el entorno en VS Code/Jupyter, instala el soporte del kernel:
+## Pruebas
 
 ```powershell
-.venv/Scripts/python.exe -m pip install ipykernel
-```
-
-El notebook contiene las funciones de visualización y usa los datos/resultados locales existentes. Ajusta `PROYECTO` si cambias la ubicación. La última celda permite repetir el entrenamiento con `REENTRENAR = True`; está desactivada por defecto y conserva el test final reservado. El script `.py` queda como alternativa para terminal, sin necesidad de ejecutarlo para visualizar el notebook.
-
-### Ver todo el análisis con un solo script
-
-Desde esta carpeta ejecuta:
-
-```powershell
-python analisis_modelos.py
-```
-
-Genera `data/analisis/informe_modelos.html` y lo abre en el navegador. Contiene las gráficas de acierto y RMSE de los nueve modelos, la clasificación de las 60 configuraciones, estabilidad por periodo, acierto móvil, predicciones frente al resultado, errores y matriz Down/Up. El informe incluye sus conclusiones y límites; es el punto de consulta principal del análisis. Los modelos originales y los optimizados se muestran por separado porque sus periodos de validación difieren.
-
-El modo de consulta usa solamente la biblioteca estándar de Python y los resultados locales existentes. El HTML incluye todas las gráficas y funciona sin conexión. Para generar sin abrir el navegador: `python analisis_modelos.py --sin-abrir`. Si los datos están en otra ubicación, consulta `python analisis_modelos.py --help`.
-
-Para repetir desde los datos auditados el entrenamiento y la optimización, conservando el test final reservado:
-
-```powershell
-.venv/Scripts/python.exe analisis_modelos.py --reentrenar
-```
-
-Este modo reutiliza los motores `training.py` y `optimize.py`; sus resultados quedan agrupados bajo `models/analisis/<ejecución>/`, excluidos de Git. Los motores se conservan para evitar duplicar código. La consulta normal no reentrena ni crea carpetas de experimentos nuevas; solo actualiza el HTML. Los informes previos se mantienen como evidencia histórica.
-
-Análisis adicional del candidato: intervalo descriptivo bootstrap de la mejora −0.88 a +6.18 puntos porcentuales. Incluye cero, depende del supuesto de disponibilidad histórica y no corrige selección de 60 modelos. Sigue siendo candidato de investigación.
-
-- [Resultados, evidencia y límites de esta etapa](docs/RESULTADOS_ETAPA_2.md)
-- [Diseño inicial del notebook](docs/INICIO.md)
-- [Autonomía y reentrenamiento: diseño y pendientes](docs/AUTONOMIA.md)
-- [Configuración vigente](config/experiments.json)
-
-## Entorno y pruebas
-
-```powershell
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements-lock.txt
-.venv/Scripts/python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
 node tests/test_market_chart.cjs
+node tests/test_bet_panel.cjs
 ```
 
-REST y componentes Paper usan biblioteca estándar; el TWAP en vivo requiere `websocket-client` y el entrenamiento requiere las dependencias del archivo de versiones. El capturador WebSocket requiere Node.js 22+.
-
-## Datos públicos
-
-```powershell
-.venv/Scripts/python.exe polymarket_public.py --output data/current_snapshot.json
-node collect_market.mjs data/current_snapshot.json data/stream_new.jsonl 30
-.venv/Scripts/python.exe market_history.py --intervals 2016 --output data/history_new
-.venv/Scripts/python.exe event_store.py --db data/market_data.sqlite --snapshot data/current_snapshot.json --stream data/stream_new.jsonl --history data/history_new/records.jsonl
-```
-
-Usar archivos/carpetas de captura e historial nuevos. El WebSocket captura un mercado durante un plazo limitado; no es todavía el colector continuo del bot.
-
-## Reproducir investigación histórica
-
-```powershell
-.venv/Scripts/python.exe training.py --records data/history_7d_20261117/records.jsonl --output models/research_new --allow-reported-close-proxy
-.venv/Scripts/python.exe optimize.py --records data/history_7d_20261117/records.jsonl --output models/optimization_new
-```
-
-`training.py` usa disponibilidad observada por defecto. El flag habilita el supuesto histórico de cierre reportado; `optimize.py` está explícitamente dedicado a esa investigación histórica. Los artefactos se marcan no aptos para operar. Ninguno de esos comandos evalúa el test final ni promueve modelos.
-
-Los datos, modelos, informes del supervisor y entorno virtual se conservan en el equipo y están excluidos de Git.
-
-## Etapa de simulación con desglose de resultados
-
-El candidato del libro utiliza ahora un MLP de dos capas ocultas (16 y 8 neuronas), regularización, escalado ajustado solo con entrenamiento y calibración separada. Los pesos antiguos de una capa siguen siendo legibles. La arquitectura por sí sola no demuestra robustez ni rentabilidad: se conservan la validación temporal en dos bloques y los controles de ejecución.
-
-El panel incluye el historial de las últimas 200 apuestas, costo con comisiones, pago, resultado neto, capital realizado, victorias, pérdidas y operaciones pendientes. Los totales incluyen toda la cartera. El capital realizado excluye revaloraciones de posiciones abiertas. La cuenta comienza con 100 USD virtuales y nunca se reinicia al actualizar o abrir el programa.
-
-Con menos de 288 ejemplos prospectivos resueltos no se entrena el candidato operativo. Cada 48 etiquetas nuevas se vuelve a evaluar. El bot puede abstenerse si no supera al libro o si faltan datos, liquidez o margen después de costos. Los modelos Yahoo y Laya siguen en evaluación experimental y no habilitan compras. Ejecuta `python live_paper.py` para recolectar, entrenar al alcanzar esos umbrales y simular las oportunidades elegibles.
+Las pruebas cubren contrato JSON remoto, ausencia de inferencia local en el flujo activo, decisión tardía, fallos de API, 3% con comisiones y mínimos, idempotencia, liquidación, integridad del historial y confirmación lateral. Node.js solo se requiere para las pruebas de interfaz y el capturador histórico alternativo, no para iniciar el monitor.

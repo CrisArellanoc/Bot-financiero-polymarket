@@ -132,11 +132,19 @@ class PaperLedger:
                 if self.db.execute('SELECT 1 FROM orders WHERE market_id=?', (market_id,)).fetchone():
                     raise ValueError("Mercado ya procesado")
                 exposure = sum((number(r[0]) for r in self.db.execute('SELECT cost FROM orders WHERE settled_at IS NULL')), Decimal(0))
+                if 'stake_fraction' in proposal:
+                    capital = self.cash + exposure
+                    required = (capital * Decimal('0.03')).quantize(Decimal('0.01'), rounding='ROUND_DOWN')
+                    if number(proposal['stake_fraction']) != Decimal('0.03') or number(proposal['stake_budget']) != required or number(proposal['capital_basis']) != capital:
+                        raise ValueError("El presupuesto debe ser el 3% del capital contable actualizado")
                 now = float(proposal['now'])
                 day_start = datetime.fromtimestamp(now, timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
                 daily_losses = sum((max(-number(r[0]), Decimal(0)) for r in self.db.execute(
                     'SELECT pnl FROM orders WHERE settled_at >= ? AND settled_at <= ?', (day_start, now))), Decimal(0))
                 fill = evaluate_buy(proposal, limits, self.cash, exposure, daily_losses)
+                if 'stake_fraction' in proposal:
+                    if not Decimal(0) <= required-number(fill['total_cost']) <= Decimal('0.000012'):
+                        raise ValueError("La ejecución debe cubrir el 3% completo sin exceder el presupuesto")
                 self.db.execute('INSERT INTO orders VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)',
                     (market_id, proposal['outcome'], fill['shares'], fill['total_cost'], proposal['end']))
                 self.db.execute('UPDATE account SET cash=? WHERE id=1', (str(self.cash - number(fill['total_cost'])),))

@@ -20,6 +20,7 @@ import laya_shadow
 import service_status
 import yahoo_predictor
 import btc_reference
+import paper_audit
 from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
 from settings import load_settings
 from autonomy import Limits, PaperLedger, number
@@ -164,6 +165,7 @@ class Agent:
         local_observer.tables(self.db)
         service_status.initialize(self.db)
         yahoo_predictor.tables(self.db)
+        paper_audit.tables(self.db)
         btc_reference.feed_status(self.db,"waiting","Esperando el TWAP de Polymarket")
         self.next_view = None
         self.last_maintenance = 0
@@ -350,6 +352,11 @@ def snapshot(path, selected=None):
                          draws=len(settled)-wins-losses,pending=len(ledger)-len(settled),
                          win_rate=wins/len(settled) if settled else None,
                          orders=list(reversed(ledger[-200:])),total=len(ledger))
+        portfolio.update(stake_fraction=.03,next_stake=float(((number(str(summary["cash"]))+exposure)*number(".03")).quantize(number(".01"),rounding="ROUND_DOWN")))
+        brain_status = rows("SELECT at,state,detail,model FROM brain_status WHERE id=1")
+        brain_decision = rows("SELECT start,ready,p_up,action,rationale,model,status,detail FROM brain_decisions WHERE start=?",(focus,))
+        brain = dict(status=next(iter(brain_status),None),decision=next(iter(brain_decision),None)) if brain_status else None
+        attempts = rows("SELECT * FROM bet_attempts ORDER BY id DESC LIMIT 200")
         models = rows("SELECT n,ready,report FROM models ORDER BY n DESC LIMIT 1")
         if models:
             models[0]["report"] = json.loads(models[0]["report"])
@@ -400,7 +407,7 @@ def snapshot(path, selected=None):
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
                     yahoo=dict(model=next(iter(yahoo_model),None),forecast=next(iter(yahoo_forecast),None),
                                status=next(iter(yahoo_status),None),metrics=yahoo_metrics),
-                    portfolio=portfolio,services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
+                    brain=brain,bet_attempts=attempts,portfolio=portfolio,services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
                     prices=prices,laya=next(iter(prediction),None),comparison=comparison,
                     laya_status=state[0] if state else "Esperando inicio",
                     observer=next(iter(observer), None), notes=notes,
@@ -422,10 +429,14 @@ class Panel(BaseHTTPRequestHandler):
         if url.path == "/":
             payload = Path(__file__).with_name("monitor.html").read_bytes()
             mime = "text/html; charset=utf-8"
-        elif url.path == "/api/state":
+        elif url.path in ("/api/state","/api/audit"):
             try:
                 query = parse_qs(url.query).get("start")
-                data = snapshot(self.db_path, int(query[0]) if query else None)
+                selected = int(query[0]) if query else None
+                if selected is not None and selected % 300:
+                    raise ValueError("Intervalo inválido")
+                data = (paper_audit.export(self.db_path,selected) if url.path == "/api/audit"
+                        else snapshot(self.db_path,selected))
                 payload = dump(data).encode()
                 mime = "application/json; charset=utf-8"
             except (ValueError, OverflowError):
@@ -453,6 +464,8 @@ def main():
     p.add_argument("--verificar-conexion", action="store_true",
                    help="Probar ambas rutas remotas con datos de ejemplo sin iniciar la cartera")
     args = p.parse_args()
+    if args.modelo_local or args.laya_local:
+        p.error("La operación actual usa exclusivamente la API del profesor; retira las opciones de modelos locales")
     config = load_settings()
     if args.verificar_conexion:
         raise SystemExit(check_remote(config))
@@ -462,14 +475,17 @@ def main():
 
 
 def check_remote(config):
+    from remote_brain import RemoteBrain
     ok = True
-    for name, client in (("Laya",RemoteLaya),("Supervisor",RemoteSupervisor)):
+    for name, client in (("Laya",RemoteLaya),("Supervisor",RemoteSupervisor),("Cerebro LLM",RemoteBrain)):
         try:
             connection = client.from_env(config)
             if name == "Laya":
                 connection.predict([.5,.02,0.,0.,0.])
-            else:
+            elif name == "Supervisor":
                 connection.explain({"modo":"prueba","mensajes":[{"ref":"E0","hecho":"Prueba de conexión del monitor."}]})
+            else:
+                connection.decide({"modo":"prueba sin operación","mensajes":[{"ref":"E0","hecho":"No hay datos de mercado; se debe abstener."}]},timeout=15)
             print(f"{name}: conexión e inferencia verificadas")
         except RemoteModelError as exc:
             ok = False
@@ -478,8 +494,14 @@ def check_remote(config):
 
 
 def serve(args, config):
+    from remote_brain import RemoteBrain
+    from remote_paper import RemoteAgent
     server = ThreadingHTTPServer(("127.0.0.1", args.port), partial(Panel, db_path=args.db))
-    agent = Agent(args.db)
+    try:
+        brain = RemoteBrain.from_env(config)
+    except RemoteModelError:
+        brain = None
+    agent = RemoteAgent(args.db,brain)
     Thread(target=server.serve_forever, daemon=True).start()
     stop = Event()
     if args.modelo_local:
@@ -493,12 +515,11 @@ def serve(args, config):
             local_observer.status(agent.db, "Supervisor remoto", str(exc))
             service_status.record(agent.db, "supervisor", "unconfigured", str(exc))
     Thread(target=chart_feed, args=(args.db,stop), daemon=True).start()
-    Thread(target=yahoo_predictor.collect,args=(args.db,stop),daemon=True).start()
     Thread(target=btc_reference.collect,args=(args.db,stop),daemon=True).start()
     btc_thread = Thread(target=btc_reference.stream,args=(args.db,stop),daemon=True)
     btc_thread.start()
     try:
-        predictor = None if args.laya_local else RemoteLaya.from_env(config)
+        predictor = RemoteLaya.from_env(config)
         Thread(target=laya_shadow.run, args=(args.db,"models/laya-en",stop,predictor), daemon=True).start()
     except RemoteModelError as exc:
         with agent.db:
@@ -519,7 +540,8 @@ def serve(args, config):
                 agent.db.execute("INSERT OR REPLACE INTO heartbeat VALUES(1,?,?)", (time.time(), detail))
             # Despertar al inicio incluso si la consulta anterior termina cerca del corte.
             remaining = 300 - time.time() % 300
-            time.sleep(min(4 if remaining <= 95 else 10, remaining))
+            opening = time.time()%300 < 15
+            time.sleep(min(1 if opening else 4 if remaining <= 95 else 10, remaining))
     except KeyboardInterrupt:
         pass
     finally:
