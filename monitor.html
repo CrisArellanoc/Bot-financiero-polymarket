@@ -654,6 +654,35 @@
           <div id="yahooMetrics" class="stack"></div>
         </article>
       </section>
+      <section>
+        <article class="stack">
+          <h2>Cartera simulada · historial de apuestas</h2>
+          <p id="paperTotals"></p>
+          <p id="paperCapital" class="muted"></p>
+          <div style="overflow-x: auto">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem">
+              <thead>
+                <tr>
+                  <th>Mercado</th>
+                  <th>Lado</th>
+                  <th>Costo USD</th>
+                  <th>Pago USD</th>
+                  <th>Resultado neto</th>
+                  <th>Estado</th>
+                  <th>Capital realizado</th>
+                </tr>
+              </thead>
+              <tbody id="paperOrders"></tbody>
+            </table>
+          </div>
+          <p id="paperEmpty" class="muted"></p>
+          <small
+            >El costo incluye comisiones. El capital realizado es capital inicial más resultados
+            liquidados; no valora posiciones abiertas al precio de mercado. Se muestran las últimas
+            200 apuestas. Victoria/pérdida se refiere al resultado neto.</small
+          >
+        </article>
+      </section>
       <footer>
         BTC en USD con fuentes distintas · Contrato en porcentaje · Pronósticos experimentales ·
         Cartera virtual
@@ -1525,6 +1554,44 @@
         }
       }
       function render(s) {
+        const portfolio = s.portfolio
+        if (portfolio) {
+          set(
+            "paperTotals",
+            `Victorias ${portfolio.wins} · Pérdidas ${portfolio.losses} · Neutras ${portfolio.draws} · Pendientes ${portfolio.pending} · Acierto de apuestas ${pct(portfolio.win_rate)}`,
+          )
+          set(
+            "paperCapital",
+            `Capital inicial ${money(portfolio.initial)} · Capital realizado ${money(portfolio.capital_realized)} · Exposición pendiente ${money(portfolio.exposure)} · Resultado neto ${money(portfolio.realized)}`,
+          )
+          el("paperOrders").replaceChildren()
+          for (const order of portfolio.orders) {
+            const row = node("tr"),
+              done = order.settled_at != null,
+              pnl = done ? Number(order.pnl) : null
+            for (const value of [
+              local(order.end - 300, true),
+              order.outcome,
+              money(order.cost),
+              done ? money(order.payout) : "—",
+              done ? money(pnl) : "—",
+              done ? (pnl > 0 ? "Victoria" : pnl < 0 ? "Pérdida" : "Neutra") : "Pendiente",
+              done ? money(order.capital_realized) : "—",
+            ]) {
+              const cell = node("td", value)
+              cell.style.padding = "10px 7px"
+              cell.style.borderBottom = "1px solid var(--line)"
+              row.append(cell)
+            }
+            el("paperOrders").append(row)
+          }
+          set(
+            "paperEmpty",
+            portfolio.total
+              ? `${portfolio.total} apuestas registradas. Las abstenciones se consultan en el registro del intervalo.`
+              : "Todavía no hay apuestas. El bot espera un modelo validado y una oportunidad que cumpla los controles de riesgo.",
+          )
+        }
         connections(s)
         const w = el("window"),
           selected = w.value

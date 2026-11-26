@@ -333,6 +333,23 @@ def snapshot(path, selected=None):
             avg((json_extract(x,'$[0]')>=0.5)=(winner='Up')) AS ml_baseline
             FROM forecasts WHERE winner IS NOT NULL AND version LIKE 'MLP-%'""")[0])
         summary["cash"] = float(db.execute("SELECT cash FROM account WHERE id=1").fetchone()[0])
+        # Capital reconstruido desde el libro contable, sin reiniciar la cuenta.
+        ledger = rows("SELECT market_id,outcome,shares,cost,end,settled_at,payout,pnl FROM orders ORDER BY end,market_id")
+        exposure = sum((number(r["cost"]) for r in ledger if r["settled_at"] is None),number(0))
+        realized = sum((number(r["pnl"]) for r in ledger if r["pnl"] is not None),number(0))
+        initial = number(str(summary["cash"])) + exposure - realized
+        settled = sorted((r for r in ledger if r["settled_at"] is not None),key=lambda r:(r["settled_at"],r["market_id"]))
+        cumulative = initial
+        for order in settled:
+            cumulative += number(order["pnl"])
+            order["capital_realized"] = float(cumulative)
+        wins = sum(number(r["pnl"])>0 for r in settled)
+        losses = sum(number(r["pnl"])<0 for r in settled)
+        portfolio = dict(initial=float(initial),exposure=float(exposure),realized=float(realized),
+                         capital_realized=float(initial+realized),wins=wins,losses=losses,
+                         draws=len(settled)-wins-losses,pending=len(ledger)-len(settled),
+                         win_rate=wins/len(settled) if settled else None,
+                         orders=list(reversed(ledger[-200:])),total=len(ledger))
         models = rows("SELECT n,ready,report FROM models ORDER BY n DESC LIMIT 1")
         if models:
             models[0]["report"] = json.loads(models[0]["report"])
@@ -383,7 +400,7 @@ def snapshot(path, selected=None):
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
                     yahoo=dict(model=next(iter(yahoo_model),None),forecast=next(iter(yahoo_forecast),None),
                                status=next(iter(yahoo_status),None),metrics=yahoo_metrics),
-                    services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
+                    portfolio=portfolio,services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
                     prices=prices,laya=next(iter(prediction),None),comparison=comparison,
                     laya_status=state[0] if state else "Esperando inicio",
                     observer=next(iter(observer), None), notes=notes,

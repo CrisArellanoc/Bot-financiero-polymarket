@@ -30,6 +30,13 @@ def sigmoid(x):
 
 def score(model, x):
     scaled = [(v - m) / s for v, m, s in zip(x, model["mean"], model["scale"], strict=True)]
+    if "layers" in model:
+        layer = scaled
+        for i, params in enumerate(model["layers"]):
+            values = [b+sum(v*w[j] for v,w in zip(layer,params["weights"],strict=True))
+                      for j,b in enumerate(params["bias"])]
+            layer = [math.tanh(v) for v in values] if i < len(model["layers"])-1 else values
+        return layer[0]
     hidden = [math.tanh(b + sum(v * w[j] for v, w in zip(scaled, model["w1"])))
               for j, b in enumerate(model["b1"])]
     return model["b2"] + sum(v*w for v, w in zip(hidden, model["w2"], strict=True))
@@ -59,11 +66,13 @@ def fit_candidate(rows):
     xs, ys = [r[1] for r in train], [r[2] for r in train]
     scaler = StandardScaler().fit(xs)
     with threadpool_limits(limits=1):
-        net = MLPClassifier(hidden_layer_sizes=(8,), activation="tanh", solver="lbfgs",
+        net = MLPClassifier(hidden_layer_sizes=(16,8), activation="tanh", solver="lbfgs",
                             alpha=1, max_iter=400, random_state=123).fit(scaler.transform(xs), ys)
     model = {"mean": scaler.mean_.tolist(), "scale": scaler.scale_.tolist(),
-             "w1": net.coefs_[0].tolist(), "b1": net.intercepts_[0].tolist(),
-             "w2": net.coefs_[1][:, 0].tolist(), "b2": float(net.intercepts_[1][0])}
+             "layers":[{"weights":w.tolist(),"bias":bias.tolist()}
+                       for w,bias in zip(net.coefs_,net.intercepts_,strict=True)]}
+    report.update(architecture=[5,16,8,1],iterations=int(net.n_iter_),
+                  purpose="prospective paper candidate; profitability not established")
     calibrator = LogisticRegression(random_state=123).fit(
         [[score(model, r[1])] for r in cal], [r[2] for r in cal])
     model.update(a=float(calibrator.coef_[0, 0]), b=float(calibrator.intercept_[0]))
