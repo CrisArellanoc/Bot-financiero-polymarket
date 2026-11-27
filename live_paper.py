@@ -353,6 +353,7 @@ def snapshot(path, selected=None):
                          draws=len(settled)-wins-losses,pending=len(ledger)-len(settled),
                          win_rate=wins/len(settled) if settled else None,
                          orders=list(reversed(ledger[-200:])),total=len(ledger))
+        portfolio["early_sales"] = rows("SELECT a.start,a.at,a.payload,f.winner FROM audit_events a LEFT JOIN forecasts f ON f.start=a.start WHERE a.kind='early_sale' ORDER BY a.id DESC LIMIT 200")
         portfolio.update(stake_fraction=.03,next_stake=float(((number(str(summary["cash"]))+exposure)*number(".03")).quantize(number(".01"),rounding="ROUND_DOWN")))
         brain_status = rows("SELECT at,state,detail,model FROM brain_status WHERE id=1")
         brain_decision = rows("SELECT start,ready,p_up,action,rationale,model,status,detail FROM brain_decisions WHERE start=?",(focus,))

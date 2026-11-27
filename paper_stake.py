@@ -23,6 +23,20 @@ def capital_and_stake(db):
     return capital, (capital * FRACTION).quantize(CENT, rounding=ROUND_DOWN)
 
 
+def fee_rate(raw):
+    rate = Decimal(0)
+    if raw.get("feesEnabled") is not False:
+        schedule = raw.get("feeSchedule")
+        if (raw.get("feesEnabled") is not True or not isinstance(schedule, dict)
+                or type(schedule.get("exponent")) not in (int, float)
+                or schedule["exponent"] != 1 or schedule.get("takerOnly") is not True):
+            raise ValueError("Comisión no verificada para este mercado")
+        rate = number(schedule["rate"])
+        if not 0 < rate < 1:
+            raise ValueError("Tasa taker inválida")
+    return rate
+
+
 def size_for_budget(raw, book, limit, budget):
     """Invierte el presupuesto completo al centavo, sin excederlo ni reducirlo.
 
@@ -37,16 +51,7 @@ def size_for_budget(raw, book, limit, budget):
     minimum = max(number(book["min_order_size"]), number(raw["orderMinSize"]))
     if number(book["min_order_size"]) <= 0 or number(raw["orderMinSize"]) <= 0:
         raise ValueError("Mínimo de participaciones no verificado")
-    rate = Decimal(0)
-    if raw.get("feesEnabled") is not False:
-        schedule = raw.get("feeSchedule")
-        if (raw.get("feesEnabled") is not True or not isinstance(schedule, dict)
-                or type(schedule.get("exponent")) not in (int, float)
-                or schedule["exponent"] != 1 or schedule.get("takerOnly") is not True):
-            raise ValueError("Comisión no verificada para este mercado")
-        rate = number(schedule["rate"])
-        if not 0 < rate < 1:
-            raise ValueError("Tasa taker inválida")
+    rate = fee_rate(raw)
     levels = sorted((number(row["price"]), number(row["size"])) for row in book["asks"])
     if not levels or any(not 0 < price < 1 or size <= 0 for price, size in levels):
         raise ValueError("Profundidad de compra inválida")
@@ -90,3 +95,22 @@ def size_for_budget(raw, book, limit, budget):
         raise ValueError("No hay liquidez para invertir el 3% completo")
     return {"shares": str(quantity), "fees": str(fees), "total_cost": str(total),
             "stake_budget": str(budget), "gross": str(gross)}
+
+def sale_quote(raw, book, shares):
+    """Proceeds for selling the entire position into current bids after fees."""
+    remaining = number(shares)
+    if remaining <= 0 or remaining < max(number(raw["orderMinSize"]), number(book["min_order_size"])):
+        raise ValueError("La posición no alcanza el mínimo de venta")
+    rate = fee_rate(raw)
+    gross = fees = Decimal(0)
+    levels = sorted(((number(row["price"]), number(row["size"])) for row in book["bids"]), reverse=True)
+    for price, size in levels:
+        if not 0 < price < 1 or size <= 0:
+            raise ValueError("Oferta de compra inválida")
+        quantity = min(remaining, size)
+        gross += quantity * price
+        fees += quantity * rate * price * (1-price)
+        remaining -= quantity
+        if not remaining:
+            return gross - fees.quantize(FEE_STEP, rounding=ROUND_UP)
+    raise ValueError("Profundidad insuficiente para vender la posición completa")

@@ -47,6 +47,18 @@ class RemotePaperTests(unittest.TestCase):
     self.assertEqual(self.db.execute('SELECT count(*) FROM orders').fetchone()[0],0)
     with self.db:
      for table in ('bet_attempts','brain_decisions','forecasts','audit_events'):self.db.execute('DELETE FROM '+table)
+ def test_early_sale_once_and_official_resolution(self):
+  self.decide()
+  self.brain.decide.return_value=dict(action="Down",p_up=.2,reason="Cambio de tendencia",refs=["E0"])
+  with self.db:self.db.execute("INSERT INTO btc_twap_quotes VALUES(3059,3060,59990,'Polymarket','59990')")
+  with patch('live_paper.time.time',return_value=3060),patch('live_paper.market_for',return_value=({},self.view,self.raw)),patch('live_paper.orderbook',return_value=(dict(self.book,bids=[dict(price=".45",size="20")]),{},3060,3060)):
+   for _ in range(2):self.agent.review_position(3000,"Up","6","3.00000000")
+  self.assertAlmostEqual(float(self.agent.ledger.cash),99.70)
+  self.assertEqual(len(snapshot(self.path)["portfolio"]["early_sales"]),1)
+  with patch('live_paper.time.time',return_value=3400),patch('live_paper.market_for',return_value=({},None,None)),patch('live_paper.normalize_resolved',return_value={'outcome':'Down'}):self.agent.resolve(3400)
+  self.assertAlmostEqual(float(self.agent.ledger.cash),99.70)
+  self.assertTrue(audit.export(self.path,3000)["receipts_verified"])
+  self.assertEqual(snapshot(self.path)["portfolio"]["early_sales"][0]["winner"],"Down")
  def test_minimum_cannot_increase_three_percent(self):
   self.raw['orderMinSize']=10
   self.decide()

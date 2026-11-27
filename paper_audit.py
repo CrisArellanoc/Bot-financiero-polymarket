@@ -106,7 +106,7 @@ def export(path,start=None):
                 receipts_valid &= bool(order and order["cost"]==attempt["actual_cost"] and
                                        order["outcome"]==attempt["outcome"])
             if order and order["settled_at"] is not None:
-                settlements = [e for e in events if e["start"]==attempt["start"] and e["kind"]=="settlement"]
+                settlements = [e for e in events if e["start"]==attempt["start"] and e["kind"] in ("settlement","early_sale")]
                 receipts_valid &= bool(settlements and all(settlements[-1]["payload"][k]==order[k]
                                            for k in ("cost","payout","pnl","settled_at")))
         return dict(mode="paper",chain_verified=verify(db),decision_hashes_verified=bool(consistent),

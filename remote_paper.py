@@ -89,6 +89,9 @@ class RemoteAgent(live.Agent):
                                       dict(ref="E1",hecho=f"TWAP BTC a la apertura {quote[2]}; precio a superar {target[1]}."),
                                       dict(ref="E2",hecho=f"Capital contable {capital} USD; presupuesto incluido costos {stake} USD."),
                                       dict(ref="E3",hecho=f"Historial disponible: {len(history)} resultados oficiales previos. No modifica los pesos del LLM.")])
+            trend = self.db.execute("SELECT ts,price FROM btc_twap_quotes WHERE ts BETWEEN ? AND ? AND seen<=? ORDER BY ts DESC LIMIT 60",(start-60,start,now)).fetchall()
+            if trend:
+                evidence["mensajes"].append(dict(ref="E4",hecho=f"TWAP BTC antes de abrir, en orden temporal (segundo, USD): {trend[::-1]}"))
             hashed = audit.digest(evidence)
             requested_at=time.time()
             with self.db:
@@ -174,6 +177,62 @@ class RemoteAgent(live.Agent):
                 service_status.teacher(self.db,"brain","error")
             self.finish(start,"rejected",reason)
 
+    def step(self):
+        start = super().step()
+        now = time.time()
+        if self.brain and start+20 <= now < start+285 and now >= getattr(self,"next_review",0):
+            position = self.db.execute("SELECT outcome,shares,cost FROM orders WHERE market_id=? AND settled_at IS NULL",(live.slug(start),)).fetchone()
+            if position:
+                self.next_review = now+30
+                try:
+                    self.review_position(start,*position)
+                except live.API_ERRORS as exc:
+                    with self.db:
+                        audit.append(self.db,start,"position_review_error",dict(reason=str(exc)))
+        return start
+
+    def review_position(self,start,side,shares,cost):
+        from paper_stake import sale_quote
+        _,view,raw = live.market_for(start)
+        live.must_be_open(view)
+        book,_,_,_ = live.orderbook(view,side)
+        indicative = sale_quote(raw,book,shares)
+        target = self.db.execute("SELECT price FROM btc_targets WHERE start=? AND source IN (?,?)",
+            (start,btc_reference.GAMMA_SOURCE,btc_reference.OPENING_TWAP_SOURCE)).fetchone()
+        ticks = self.db.execute("SELECT ts,price FROM btc_twap_quotes WHERE ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT 60",
+            (start,time.time())).fetchall()
+        if not target or not ticks or time.time()-ticks[0][0]>10:
+            raise ValueError("Revisión pendiente de referencia y TWAP recientes")
+        evidence = dict(mercado=live.slug(start),modo="revision_paper",start=start,end=start+300,as_of=time.time(),
+            mensajes=[dict(ref="E0",hecho=f"Objetivo BTC {target[0]}; observaciones TWAP (segundo, USD) en orden temporal: {ticks[::-1]}"),
+                      dict(ref="E1",hecho=f"Posición {side}, {shares} participaciones, costo {cost} USD, venta neta estimada {indicative} USD.")])
+        answer = self.brain.decide(evidence,timeout=min(10,max(.1,start+300-time.time())))
+        with self.db:
+            audit.append(self.db,start,"position_review",dict(model=self.brain.name,evidence=evidence,response=answer))
+            self.emit(start,"LLM","Riesgo","Reevaluación de posición",accion=answer["action"],motivo=answer["reason"])
+        if answer["action"] in ("abstain",side) or time.time()>=start+300:
+            return
+        book,_,_,ts = live.orderbook(view,side)
+        net = sale_quote(raw,book,shares)
+        p = number(answer["p_up"])
+        hold = number(shares)*(p if side=="Up" else 1-p)
+        if net <= hold:
+            return
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            at = time.time()
+            if at >= start+300 or at-ts > live.LIMITS.max_book_age_seconds:
+                return
+            pnl = str(net-number(cost))
+            changed = self.db.execute("UPDATE orders SET settled_at=?,payout=?,pnl=? WHERE market_id=? AND settled_at IS NULL",
+                (at,str(net),pnl,live.slug(start))).rowcount
+            if changed:
+                cash = number(self.db.execute("SELECT cash FROM account WHERE id=1").fetchone()[0])
+                self.db.execute("UPDATE account SET cash=? WHERE id=1",(str(cash+net),))
+                audit.append(self.db,start,"early_sale",dict(cost=cost,payout=str(net),pnl=pnl,settled_at=at,
+                    shares=shares,side=side,bids=book["bids"],book_time=ts,hold_value=str(hold),reason=answer["reason"]))
+                self.emit(start,"Riesgo","Cartera","Venta anticipada simulada",ingreso=str(net),pnl=pnl)
+
     def train(self,start):
         """El LLM se consulta en el servidor; este modo no entrena modelos."""
         return
@@ -184,7 +243,7 @@ class RemoteAgent(live.Agent):
         rows = self.db.execute("""SELECT f.start,f.winner,o.cost,o.payout,o.pnl,o.settled_at FROM forecasts f
             JOIN orders o ON o.market_id=('btc-updown-5m-'||f.start)
             JOIN bet_attempts b ON b.start=f.start WHERE o.settled_at IS NOT NULL AND NOT EXISTS(
-                SELECT 1 FROM audit_events a WHERE a.start=f.start AND a.kind='settlement')""").fetchall()
+                SELECT 1 FROM audit_events a WHERE a.start=f.start AND a.kind IN ('settlement','early_sale'))""").fetchall()
         for start,winner,cost,payout,pnl,at in rows:
             with self.db:
                 audit.append(self.db,start,"settlement",dict(winner=winner,cost=cost,payout=payout,pnl=pnl,settled_at=at))

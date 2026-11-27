@@ -864,6 +864,7 @@
           <small id="observerStatus"></small>
         </article>
       </section>
+      <section><h2>Ventas anticipadas simuladas</h2><p>Últimas 200 ventas · <a href="/api/audit" target="_blank">Consultar historial completo</a></p><div id="earlySales"></div></section>
       <section id="evaluationPanel">
         <article class="stack">
           <div class="bar">
@@ -2356,6 +2357,18 @@
       el("evaluationVersion").addEventListener("change", () => renderEvaluation(latestEvaluation))
 
       function render(s) {
+        const exits = el("earlySales")
+        if (exits) {
+          const sales = s.portfolio?.early_sales || []
+          exits.replaceChildren(...sales.map(row => {
+            const item = document.createElement("p"), sale = JSON.parse(row.payload)
+            item.textContent = new Date(row.at*1000).toLocaleString() + " · " + sale.side +
+              " · Venta neta $" + Number(sale.payout).toFixed(2) + " · Resultado $" +
+              Number(sale.pnl).toFixed(2) + " · " + sale.reason + (row.winner ? " · Diferencia frente a mantener: $" + (Number(sale.payout) - (row.winner === sale.side ? Number(sale.shares) : 0)).toFixed(2) : " · Pendiente de resolución")
+            return item
+          }))
+          if (!sales.length) exits.textContent = "Aún no hay ventas anticipadas."
+        }
         renderEvaluation(s.evaluation)
         const portfolio = s.portfolio
         if (portfolio) {
