@@ -115,3 +115,7 @@ node tests/test_evaluation_ui.cjs
 ```
 
 Las pruebas cubren contrato JSON remoto, ausencia de inferencia local en el flujo activo, decisión tardía, fallos de API, 3% con comisiones y mínimos, idempotencia, liquidación, integridad del historial y confirmación lateral. Node.js solo se requiere para las pruebas de interfaz y el capturador histórico alternativo, no para iniciar el monitor.
+
+### Muestreo de pronósticos con una cartera separada
+
+Ejecuta `.\.venv\Scripts\python.exe live_paper.py --exploracion` para solicitar una dirección al LLM en cada apertura con datos suficientes. En un empate exacto se registra Up con probabilidad 0.50. El bot intenta una compra simulada al mejor precio vendedor observado aunque la ventaja estimada sea baja o negativa. Aplica los mismos controles de plazo, liquidez, comisiones, saldo y riesgo. Conserva las revisiones de salida. La cartera experimental inicia con 100 USD virtuales y persiste en `data/live_paper_exploracion.sqlite`. El encabezado del monitor identifica este modo. Evalúa los aciertos sobre pronósticos resueltos y el resultado neto sobre compras ejecutadas. Para retomar la cartera habitual omite `--exploracion`.

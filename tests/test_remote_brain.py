@@ -39,6 +39,16 @@ class RemoteBrainTests(unittest.TestCase):
         self.assertIn("NO calibrada",body["messages"][0]["content"])
         self.assertNotIn("private-test-token",repr(client.endpoint))
 
+    def test_exploration_requests_direction_and_preserves_uncertainty(self):
+        client=brain.RemoteBrain.from_env(self.settings)
+        decision={**self.decision,"p_up":.5}
+        evidence={**self.evidence,"modo":"exploracion_paper"}
+        with patch.object(remote._Endpoint,"chat",return_value=decision) as api:
+            self.assertEqual(client.decide(evidence),decision)
+            self.assertEqual(api.call_args.args[2]["properties"]["action"]["enum"],["Up","Down"])
+            api.return_value={**decision,"action":"abstain"}
+            with self.assertRaises(remote.RemoteModelError):client.decide(evidence)
+
     def test_rejects_malformed_unobserved_and_inconsistent_decisions(self):
         for change in ({"action":"BUY"},{"action":"Down"},{"p_up":True},{"p_up":".6"},
                        {"p_up":float("nan")},{"p_up":None},{"p_up":.5},{"p_up":1.1},

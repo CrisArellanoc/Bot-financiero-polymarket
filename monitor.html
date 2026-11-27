@@ -727,7 +727,7 @@
       <header>
         <div>
           <div class="brand">BTC / POLYMARKET</div>
-          <h1>Terminal de simulación</h1>
+          <h1 id="paperModeTitle">Terminal de simulación</h1>
         </div>
         <div class="stack" style="text-align: right">
           <span class="tag">Etapa 1 · Simulación</span><br />
@@ -2357,6 +2357,8 @@
       el("evaluationVersion").addEventListener("change", () => renderEvaluation(latestEvaluation))
 
       function render(s) {
+        const modeTitle = el("paperModeTitle")
+        if (modeTitle) modeTitle.textContent = s.portfolio?.exploration ? "Exploración · cartera simulada" : "Terminal de simulación"
         const exits = el("earlySales")
         if (exits) {
           const sales = s.portfolio?.early_sales || []

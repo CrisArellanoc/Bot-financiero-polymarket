@@ -9,12 +9,20 @@ from paper_stake import capital_and_stake, size_for_budget
 from autonomy import number
 import service_status
 import btc_reference
-from remote_brain import PROMPT_VERSION
+from remote_brain import PROMPT_VERSION, EXPLORATION_VERSION
 
 
 class RemoteAgent(live.Agent):
-    def __init__(self,path,brain=None):
+    def __init__(self,path,brain=None,exploration=False):
         super().__init__(path)
+        self.exploration = exploration
+        with self.db:
+            self.db.execute("CREATE TABLE IF NOT EXISTS paper_mode(id INTEGER PRIMARY KEY, exploration INTEGER NOT NULL)")
+            if exploration and not self.db.execute("SELECT 1 FROM paper_mode").fetchone() and self.db.execute("SELECT 1 FROM bet_attempts LIMIT 1").fetchone():
+                raise ValueError("La cartera ya contiene intentos de la estrategia habitual")
+            self.db.execute("INSERT OR IGNORE INTO paper_mode VALUES(1,?)",(int(exploration),))
+            if self.db.execute("SELECT exploration FROM paper_mode WHERE id=1").fetchone()[0] != exploration:
+                raise ValueError("La cartera pertenece a otro modo de simulación")
         self.brain = brain
         self.status("waiting" if brain else "unconfigured",
                     "Esperando apertura" if brain else "Configura la API del profesor")
@@ -78,7 +86,8 @@ class RemoteAgent(live.Agent):
                 SELECT f.start,f.winner,f.p,f.version,o.pnl FROM forecasts f
                 LEFT JOIN orders o ON o.market_id=('btc-updown-5m-'||f.start)
                 WHERE f.labeled<=? AND f.winner IS NOT NULL ORDER BY f.start DESC LIMIT 8""",(start,))]
-            evidence = dict(mercado=live.slug(start),start=start,end=start+300,as_of=now,modo="paper",prompt_version=PROMPT_VERSION,
+            version = EXPLORATION_VERSION if self.exploration else PROMPT_VERSION
+            evidence = dict(mercado=live.slug(start),start=start,end=start+300,as_of=now,modo="exploracion_paper" if self.exploration else "paper",prompt_version=version,
                             opening_features=dict(zip(live.ml.FEATURES,x)),inputs_available_at=available,
                             price_to_beat=dict(price=target[1],received=target[0],source=target[2],reference_ts=start,
                                                gamma_confirmed=target[2]==btc_reference.GAMMA_SOURCE),
@@ -102,9 +111,9 @@ class RemoteAgent(live.Agent):
                                 (start,now,self.brain.name,audit.canonical(evidence),hashed))
                 self.db.execute("UPDATE bet_attempts SET evidence_hash=? WHERE start=?",(hashed,start))
                 self.db.execute("UPDATE brain_decisions SET requested_at=?,prompt_version=? WHERE start=?",
-                                (requested_at,PROMPT_VERSION,start))
+                                (requested_at,version,start))
                 audit.append(self.db,start,"brain_request",dict(evidence=evidence,evidence_hash=hashed,
-                             requested_at=requested_at,prompt_version=PROMPT_VERSION))
+                             requested_at=requested_at,prompt_version=version))
                 self.emit(start,"Libro","LLM","Evidencia de apertura enviada al servidor",evidence_hash=hashed,datos=evidence)
             self.status("busy","LLM remoto analizando la apertura")
             service_status.teacher(self.db,"brain","busy")
@@ -144,6 +153,8 @@ class RemoteAgent(live.Agent):
             # Recalcular después de la consulta: liquidaciones anteriores pueden haber cambiado el capital.
             capital,stake = capital_and_stake(self.db)
             limit = probability-number(live.LIMITS.minimum_net_edge)
+            if self.exploration:
+                limit = number(top['best_ask'])  # Únicamente liquidez al mejor precio observado.
             fill = size_for_budget(raw,book,limit,stake)
             proposal = dict(now=time.time(),start=start,end=start+300,book_time=ts,inputs_available_at=available,
                 shares=fill["shares"],p_win=str(probability),max_price=str(limit),total_costs_extra=fill["fees"],
@@ -156,7 +167,7 @@ class RemoteAgent(live.Agent):
                 self.db.execute("UPDATE bet_attempts SET capital=?,stake=?,outcome=? WHERE start=?",
                                 (str(capital),str(stake),side,start))
                 audit.append(self.db,start,"paper_proposal",proposal)
-            result = self.ledger.buy(proposal,replace(live.LIMITS,max_order_cost=str(stake)))
+            result = self.ledger.buy(proposal,replace(live.LIMITS,max_order_cost=str(stake),require_net_edge=not self.exploration))
             if result["status"] == "filled_paper":
                 self.finish(start,"filled_paper","Apuesta simulada ejecutada y registrada",result["total_cost"],side)
             else:

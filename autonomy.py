@@ -31,6 +31,8 @@ class Limits:
     max_book_age_seconds: float
     entry_deadline_seconds: float
 
+    require_net_edge: bool = True
+
     def validate(self):
         for name in ('max_order_cost', 'max_total_exposure', 'max_daily_loss_budget', 'minimum_net_edge', 'max_spread'):
             if number(getattr(self, name)) <= 0:
@@ -89,7 +91,7 @@ def evaluate_buy(proposal, limits, cash, exposure, daily_losses):
     total = gross + fees
     # Modelo Paper hold-to-resolution: una participación ganadora paga una unidad.
     expected_net = probability * qty - total
-    if expected_net / qty < number(limits.minimum_net_edge):
+    if limits.require_net_edge and expected_net / qty < number(limits.minimum_net_edge):
         raise ValueError("Ventaja estimada insuficiente después de costos")
     if total > min(number(cash), number(limits.max_order_cost)):
         raise ValueError("Saldo o importe máximo insuficiente")

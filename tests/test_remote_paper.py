@@ -59,6 +59,13 @@ class RemotePaperTests(unittest.TestCase):
   self.assertAlmostEqual(float(self.agent.ledger.cash),99.70)
   self.assertTrue(audit.export(self.path,3000)["receipts_verified"])
   self.assertEqual(snapshot(self.path)["portfolio"]["early_sales"][0]["winner"],"Down")
+ def test_exploration_can_sample_a_weak_forecast_at_observed_price(self):
+  self.agent.exploration=True
+  self.brain.decide.return_value=dict(action="Up",p_up=.50,reason="Empate",refs=["E0"])
+  self.decide()
+  self.assertEqual(self.agent.ledger.cash,97)
+  self.assertEqual(self.brain.decide.call_args.args[0]["modo"],"exploracion_paper")
+  self.assertTrue(audit.export(self.path,3000)["receipts_verified"])
  def test_minimum_cannot_increase_three_percent(self):
   self.raw['orderMinSize']=10
   self.decide()

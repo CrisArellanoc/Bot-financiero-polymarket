@@ -354,6 +354,8 @@ def snapshot(path, selected=None):
                          win_rate=wins/len(settled) if settled else None,
                          orders=list(reversed(ledger[-200:])),total=len(ledger))
         portfolio["early_sales"] = rows("SELECT a.start,a.at,a.payload,f.winner FROM audit_events a LEFT JOIN forecasts f ON f.start=a.start WHERE a.kind='early_sale' ORDER BY a.id DESC LIMIT 200")
+        mode_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_mode'").fetchone()
+        portfolio["exploration"] = bool(mode_table and db.execute("SELECT exploration FROM paper_mode WHERE id=1").fetchone()[0])
         portfolio.update(stake_fraction=.03,next_stake=float(((number(str(summary["cash"]))+exposure)*number(".03")).quantize(number(".01"),rounding="ROUND_DOWN")))
         brain_status = rows("SELECT at,state,detail,model FROM brain_status WHERE id=1")
         brain_decision = rows("SELECT start,ready,p_up,action,rationale,model,status,detail FROM brain_decisions WHERE start=?",(focus,))
@@ -467,7 +469,10 @@ def main():
     p.add_argument("--laya-local", action="store_true", help="Cargar los pesos locales de Laya en CPU")
     p.add_argument("--verificar-conexion", action="store_true",
                    help="Probar ambas rutas remotas con datos de ejemplo sin iniciar la cartera")
+    p.add_argument("--exploracion", action="store_true", help="Evaluar una clasificación por apertura en una cartera paper independiente")
     args = p.parse_args()
+    if args.exploracion:
+        args.db = args.db.with_name(args.db.stem + "_exploracion" + args.db.suffix)
     if args.modelo_local or args.laya_local:
         p.error("La operación actual usa exclusivamente la API del profesor; retira las opciones de modelos locales")
     config = load_settings()
@@ -505,7 +510,7 @@ def serve(args, config):
         brain = RemoteBrain.from_env(config)
     except RemoteModelError:
         brain = None
-    agent = RemoteAgent(args.db,brain)
+    agent = RemoteAgent(args.db,brain,exploration=args.exploracion)
     Thread(target=server.serve_forever, daemon=True).start()
     stop = Event()
     if args.modelo_local:
