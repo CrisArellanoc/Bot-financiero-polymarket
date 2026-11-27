@@ -80,11 +80,12 @@ class RemotePaperTests(unittest.TestCase):
    self.assertNotIn("sale_pnl",snapshot(self.path,3000)["portfolio"]["orders"][0])
   with patch("live_paper.time.time",return_value=3065):
    self.assertNotIn("bid",snapshot(self.path,3000)["portfolio"]["orders"][0])
- def test_minimum_cannot_increase_three_percent(self):
+ def test_minimum_can_increase_three_percent(self):
   self.raw['orderMinSize']=10
   self.decide()
-  self.assertEqual(snapshot(self.path)['bet_attempts'][0]['status'],'rejected')
-  self.assertEqual(self.agent.ledger.cash,100)
+  self.assertEqual(snapshot(self.path)['bet_attempts'][0]['status'],'filled_paper')
+  self.assertEqual(self.agent.ledger.cash,95)
+  self.assertIn('mínimo válido aplicado: 5',snapshot(self.path)['bet_attempts'][0]['reason'])
  def test_hash_chain_detects_evidence_and_event_edits(self):
   self.decide()
   with self.db:self.db.execute("UPDATE brain_decisions SET evidence='{}'")
@@ -134,6 +135,19 @@ class RemotePaperTests(unittest.TestCase):
    self.assertTrue(data['chain_verified'] and data['receipts_verified'])
    self.assertEqual(data['orders'][0]['cost'],'3.00000000')
    self.assertEqual(data['mode'],'paper')
+   from urllib.request import Request
+   from urllib.error import HTTPError
+   base=f'http://127.0.0.1:{server.server_port}'
+   for enabled in (False,True):
+    request=Request(base+'/api/controls',data=json.dumps(dict(daily_loss_enabled=enabled)).encode(),
+                    headers={'Content-Type':'application/json','Origin':base},method='POST')
+    with urlopen(request) as response:self.assertEqual(response.status,204)
+    self.assertEqual(snapshot(self.path)['portfolio']['daily_loss_enabled'],enabled)
+   with self.assertRaises(HTTPError) as caught:
+    urlopen(Request(base+'/api/controls',data=b'{"daily_loss_enabled":false}',
+                    headers={'Content-Type':'application/json','Origin':'https://external.invalid'},method='POST'))
+   self.assertEqual(caught.exception.code,403)
+   self.assertTrue(audit.export(self.path)['chain_verified'])
   finally:server.shutdown();server.server_close();worker.join()
 
  def test_reference_correction_during_llm_call_rejects_without_rewriting_evidence(self):

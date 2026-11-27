@@ -42,13 +42,15 @@ Conéctate a la red del profesor o a una VPN autorizada. El cliente verifica TLS
 
 La simulación es experimental. Usar un LLM como cerebro no demuestra ventaja predictiva ni rentabilidad. No hay órdenes reales ni conexión autenticada de trading. La API de Polymarket se usa para lectura pública.
 
-## Apuesta fija del 3% del capital total
+## Apuesta del 3% o mínimo válido del mercado
 
 Capital contable = efectivo disponible + costo de posiciones pendientes. Equivale al capital inicial más resultados realizados; no incluye revalorización de posiciones abiertas. La cuenta nueva comienza con 100 USD virtuales. Una cuenta existente nunca se reinicia al actualizar.
 
 Presupuesto = 3% del capital contable, redondeado hacia abajo al centavo. Con 100 USD corresponde a 3.00 USD; con 90 USD a 2.70 USD y con 103 USD a 3.09 USD. Las comisiones quedan dentro de ese importe. Se admite únicamente el residuo de redondear participaciones a seis decimales y comisión a cinco (como máximo 0.000012 USD), sin exceder el presupuesto.
 
-No se sube ni reduce la apuesta para alcanzar mínimos: si el 3% no alcanza el mínimo de participaciones o la profundidad no permite cubrirlo completo, se rechaza y se explica. También se mantienen límites experimentales de exposición total de 30 USD y presupuesto diario de pérdida de 35 USD (UTC). Si el efectivo o los controles no alcanzan, no se apuesta. El 3% se vuelve a verificar dentro de la transacción de la cartera para evitar presupuestos desactualizados. La comprobación del margen utiliza la puntuación subjetiva del LLM, no una garantía económica.
+Si el 3% no alcanza el mínimo de participaciones, se compra el mínimo válido, calculando su costo sobre los niveles disponibles e incluyendo comisiones. Este ajuste puede superar el 3%. La cartera vuelve a comprobar el tamaño, el presupuesto y el capital dentro de la transacción. La profundidad insuficiente, el saldo y el límite de exposición total de 30 USD aún pueden rechazar la compra.
+
+El panel incluye el interruptor «Aplicar presupuesto diario de pérdidas». Inicia activado con 35 USD y considera las pérdidas realizadas del día UTC más la exposición abierta y el costo de la nueva compra. Al desactivarlo, la cartera omite esa comprobación en las próximas entradas. El cambio se guarda por cartera y queda en la auditoría; vuelve a activarlo con el mismo interruptor. Una decisión rechazada queda registrada y la siguiente oportunidad es la próxima apertura. La pestaña lateral muestra el motivo operativo y la justificación breve del modelo, además del presupuesto aplicado y el costo confirmado.
 
 La fórmula de comisiones se verifica con los parámetros publicados de cada mercado; tarifas desconocidas bloquean el intento. Referencias: [comisiones](https://docs.polymarket.com/trading/fees), [mercados](https://docs.polymarket.com/market-data/market-details).
 
@@ -58,7 +60,7 @@ La gráfica BTC en USD usa el TWAP de Chainlink de 60 segundos distribuido por P
 
 La red muestra Polymarket, libro, LLM remoto, riesgo, cartera, resultado oficial y evaluación. Cada neurona representa un módulo con soma, núcleo, dendritas y axón. Los impulsos corresponden a mensajes registrados; no son activaciones internas de la red del proveedor. Selecciona nodos o mensajes para consultar datos y decisiones. La reproducción histórica está identificada y respeta movimiento reducido.
 
-La pestaña lateral de apuestas se abre al recibir un intento nuevo o una actualización de su estado. Distingue preparando/pendiente, ejecutada en simulación, rechazada y abstención. Muestra capital, 3% objetivo, costo confirmado, lado, modelo, motivo y hashes. Una decisión Up no se presenta como compra ejecutada: la confirmación procede del recibo de la cartera.
+La pestaña lateral de apuestas se abre al recibir un intento nuevo o una actualización de su estado. Distingue preparando/pendiente, ejecutada en simulación, rechazada y abstención. Muestra capital, presupuesto aplicado (3% o mínimo), costo confirmado, lado, modelo, motivo y hashes. Una decisión Up no se presenta como compra ejecutada: la confirmación procede del recibo de la cartera.
 
 El historial conserva costo, pago, resultado neto y capital realizado. Victoria/pérdida se refiere al resultado neto después de costos. Las operaciones pendientes no cuentan como victorias. La interfaz muestra las últimas 200 apuestas e intentos y totales completos. Los eventos y recibos completos permanecen en SQLite. La viñeta del profesor muestra respuestas remotas recientes y los errores por servicio; no certifica eficacia predictiva.
 

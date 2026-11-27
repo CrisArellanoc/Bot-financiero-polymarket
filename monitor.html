@@ -716,7 +716,7 @@
       </div>
       <div class="bet-drawer-body">
         <div class="bet-budget">
-          <small>Próximo importe objetivo · 3% del capital total</small
+          <small>Objetivo · 3% del capital; se ajusta al mínimo válido</small
           ><strong id="nextStake">—</strong>
           <p id="stakeCapital" class="muted"></p>
         </div>
@@ -744,6 +744,10 @@
             <option value="">Actual</option>
           </select></label
         >
+      </section>
+      <section class="bar" aria-label="Control de pérdidas simuladas">
+        <label><input type="checkbox" id="dailyLossToggle" checked> Aplicar presupuesto diario de pérdidas</label>
+        <span id="dailyLossState" role="status"></span>
       </section>
       <section id="connections" class="connections" aria-label="Estado de las conexiones"></section>
       <section class="metrics" aria-label="Resultados de la cartera simulada">
@@ -1892,7 +1896,7 @@
                 ["Mercado", local(record.start, true)],
                 ["Lado", record.outcome ?? "—"],
                 ["Capital al decidir", record.capital == null ? "—" : money(record.capital)],
-                ["3% objetivo", record.stake == null ? "—" : money(record.stake)],
+                ["Presupuesto aplicado · 3% o mínimo", record.stake == null ? "—" : money(record.stake)],
                 [
                   "Costo confirmado",
                   executed && record.actual_cost != null ? money(record.actual_cost) : "—",
@@ -2364,6 +2368,25 @@
       }
       el("evaluationVersion").addEventListener("change", () => renderEvaluation(latestEvaluation))
 
+      let controlSaving = false
+      const dailyToggle = el("dailyLossToggle")
+      dailyToggle.addEventListener("change", async () => {
+        controlSaving = true
+        dailyToggle.disabled = true
+        try {
+          const response = await fetch("/api/controls",{
+            method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({daily_loss_enabled:dailyToggle.checked})})
+          if (!response.ok) throw new Error("No se pudo guardar")
+          set("dailyLossState", dailyToggle.checked ? "Límite activado" : "Límite desactivado para esta cartera")
+        } catch(error) {
+          dailyToggle.checked = !dailyToggle.checked
+          set("dailyLossState","No se guardó el cambio. Intenta de nuevo.")
+        } finally {
+          controlSaving = false
+          dailyToggle.disabled = false
+        }
+      })
       let timerEnd = null
       function updateWindowTimer() {
         if (timerEnd === null) return
@@ -2375,6 +2398,10 @@
         set("contractAsks", ["Up","Down"].map(side => side+" "+(asks.get(side)==null ? "—" : (100*asks.get(side)).toFixed(1)+"¢")).join(" · "))
         timerEnd = s.focus + 300
         updateWindowTimer()
+        if (!controlSaving) {
+          dailyToggle.checked = s.portfolio?.daily_loss_enabled ?? true
+          set("dailyLossState", (dailyToggle.checked ? "Activo · presupuesto " + money(s.portfolio?.daily_loss_budget ?? 35) : "Desactivado") + " · pérdidas realizadas del día UTC + exposición abierta")
+        }
         const modeTitle = el("paperModeTitle")
         if (modeTitle) modeTitle.textContent = s.portfolio?.exploration ? "Exploración · cartera simulada" : "Terminal de simulación"
         const exits = el("earlySales")

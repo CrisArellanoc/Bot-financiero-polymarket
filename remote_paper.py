@@ -157,21 +157,26 @@ class RemoteAgent(live.Agent):
             limit = probability-number(live.LIMITS.minimum_net_edge)
             if self.exploration:
                 limit = number(top['best_ask'])  # Únicamente liquidez al mejor precio observado.
-            fill = size_for_budget(raw,book,limit,stake)
+            fill = size_for_budget(raw,book,limit,stake,allow_minimum=True)
+            requested_stake = stake
+            stake = number(fill['stake_budget'])
             proposal = dict(now=time.time(),start=start,end=start+300,book_time=ts,inputs_available_at=available,
                 shares=fill["shares"],p_win=str(probability),max_price=str(limit),total_costs_extra=fill["fees"],
                 min_order_size=str(max(number(book["min_order_size"]),number(raw["orderMinSize"]))),
                 model_version="LLM · "+self.brain.name,market_id=live.slug(start),outcome=side,
                 best_bid=top["best_bid"],asks=[[v["price"],v["size"]] for v in book["asks"]],
                 model_approved=True,costs_verified=True,rules_verified=True,market_open=True,
-                stake_fraction="0.03",stake_budget=str(stake),capital_basis=str(capital))
+                stake_fraction="0.03",stake_budget=str(stake),capital_basis=str(capital),
+                stake_policy="three_percent_or_minimum",fee_market={key:raw.get(key) for key in ("feesEnabled","feeSchedule","orderMinSize")})
             with self.db:
                 self.db.execute("UPDATE bet_attempts SET capital=?,stake=?,outcome=? WHERE start=?",
                                 (str(capital),str(stake),side,start))
                 audit.append(self.db,start,"paper_proposal",proposal)
             result = self.ledger.buy(proposal,replace(live.LIMITS,max_order_cost=str(stake),require_net_edge=not self.exploration))
             if result["status"] == "filled_paper":
-                self.finish(start,"filled_paper","Apuesta simulada ejecutada y registrada",result["total_cost"],side)
+                self.finish(start,"filled_paper",
+                    f"Apuesta simulada ejecutada. Objetivo 3%: {requested_stake} USD; mínimo válido aplicado: {stake} USD."
+                    if fill["minimum_adjusted"] else "Apuesta simulada ejecutada y registrada",result["total_cost"],side)
             else:
                 self.finish(start,"rejected",result["reason"],outcome=side)
         except live.API_ERRORS as exc:
@@ -188,6 +193,9 @@ class RemoteAgent(live.Agent):
             if self.db.execute("SELECT status FROM brain_decisions WHERE start=?",(start,)).fetchone() == ("error",):
                 self.status("error",reason)
                 service_status.teacher(self.db,"brain","error")
+            decision = self.db.execute("SELECT rationale FROM brain_decisions WHERE start=?",(start,)).fetchone()
+            if decision and decision[0]:
+                reason += " · Evaluación del modelo: "+decision[0]
             self.finish(start,"rejected",reason)
 
     def step(self):

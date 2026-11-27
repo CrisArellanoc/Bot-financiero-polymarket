@@ -37,13 +37,13 @@ def fee_rate(raw):
     return rate
 
 
-def size_for_budget(raw, book, limit, budget):
-    """Invierte el presupuesto completo al centavo, sin excederlo ni reducirlo.
+def size_for_budget(raw, book, limit, budget, allow_minimum=False):
+    """Invierte el presupuesto o el mínimo de participaciones si se autoriza.
 
     Redondea participaciones hacia abajo a seis decimales y comisión total hacia
     arriba a cinco. Un residuo inferior a un centavo es solo redondeo de tamaño;
     la falta de profundidad, los mínimos o una tarifa desconocida rechazan el
-    intento en lugar de invertir un importe menor o aumentar el 3%.
+    intento. allow_minimum permite superar el 3% exclusivamente por el mínimo.
     """
     limit, budget = number(limit), number(budget)
     if not 0 < limit < 1 or budget <= 0 or budget != budget.quantize(CENT):
@@ -85,8 +85,15 @@ def size_for_budget(raw, book, limit, budget):
         else:
             high = middle-1
     quantity = Decimal(low) * SHARE_STEP
+    adjusted = False
     if quantity < minimum:
-        raise ValueError("El 3% no alcanza el mínimo de participaciones del mercado")
+        if not allow_minimum:
+            raise ValueError("El 3% no alcanza el mínimo de participaciones del mercado")
+        low = int((minimum/SHARE_STEP).to_integral_value(rounding=ROUND_UP))
+        quantity = Decimal(low)*SHARE_STEP
+        gross, fees = quote(low)
+        budget = gross+fees
+        adjusted = True
     gross, fees = quote(low)
     total = gross+fees
     # Solo tolerar el residuo inevitable de una microunidad de participaciones
@@ -94,7 +101,7 @@ def size_for_budget(raw, book, limit, budget):
     if total <= 0 or budget-total > FEE_STEP+2*SHARE_STEP:
         raise ValueError("No hay liquidez para invertir el 3% completo")
     return {"shares": str(quantity), "fees": str(fees), "total_cost": str(total),
-            "stake_budget": str(budget), "gross": str(gross)}
+            "stake_budget": str(budget), "gross": str(gross), "minimum_adjusted": adjusted}
 
 def sale_quote(raw, book, shares):
     """Proceeds for selling the entire position into current bids after fees."""

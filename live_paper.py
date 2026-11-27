@@ -405,11 +405,13 @@ def snapshot(path, selected=None):
         portfolio["early_sales"] = rows("SELECT a.start,a.at,a.payload,f.winner FROM audit_events a LEFT JOIN forecasts f ON f.start=a.start WHERE a.kind='early_sale' ORDER BY a.id DESC LIMIT 200")
         mode_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_mode'").fetchone()
         portfolio["exploration"] = bool(mode_table and db.execute("SELECT exploration FROM paper_mode WHERE id=1").fetchone()[0])
+        portfolio["daily_loss_enabled"] = bool(db.execute("SELECT daily_loss_enabled FROM paper_controls WHERE id=1").fetchone()[0])
+        portfolio["daily_loss_budget"] = float(LIMITS.max_daily_loss_budget)
         portfolio.update(stake_fraction=.03,next_stake=float(((number(str(summary["cash"]))+exposure)*number(".03")).quantize(number(".01"),rounding="ROUND_DOWN")))
         brain_status = rows("SELECT at,state,detail,model FROM brain_status WHERE id=1")
         brain_decision = rows("SELECT start,ready,p_up,action,rationale,model,status,detail FROM brain_decisions WHERE start=?",(focus,))
         brain = dict(status=next(iter(brain_status),None),decision=next(iter(brain_decision),None)) if brain_status else None
-        attempts = rows("SELECT b.*,o.pnl AS settled_pnl,o.payout AS settled_payout FROM bet_attempts b LEFT JOIN orders o ON o.market_id=('btc-updown-5m-'||b.start) ORDER BY b.id DESC LIMIT 200")
+        attempts = rows("SELECT b.*,o.pnl AS settled_pnl,o.payout AS settled_payout,d.rationale FROM bet_attempts b LEFT JOIN brain_decisions d ON d.start=b.start LEFT JOIN orders o ON o.market_id=('btc-updown-5m-'||b.start) ORDER BY b.id DESC LIMIT 200")
         models = rows("SELECT n,ready,report FROM models ORDER BY n DESC LIMIT 1")
         if models:
             models[0]["report"] = json.loads(models[0]["report"])
@@ -478,6 +480,30 @@ class Panel(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
+
+    def do_POST(self):
+        if self.path != "/api/controls":
+            return self.send_error(404)
+        origin = f"http://127.0.0.1:{self.server.server_port}"
+        if self.headers.get("Origin") != origin or self.headers.get("Host") != origin.removeprefix("http://"):
+            return self.send_error(403)
+        try:
+            size = int(self.headers.get("Content-Length","0"))
+            if not 0 < size <= 128 or self.headers.get("Content-Type") != "application/json":
+                raise ValueError()
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data,dict) or set(data) != {"daily_loss_enabled"} or type(data["daily_loss_enabled"]) is not bool:
+                raise ValueError()
+            with closing(sqlite3.connect(self.db_path,timeout=10)) as db:
+                with db:
+                    db.execute("BEGIN IMMEDIATE")
+                    db.execute("UPDATE paper_controls SET daily_loss_enabled=? WHERE id=1",(int(data["daily_loss_enabled"]),))
+                    paper_audit.append(db,int(time.time())//300*300,"manual_controls",data)
+        except (ValueError,TypeError):
+            return self.send_error(400)
+        self.send_response(204)
+        self.send_header("Content-Length","0")
+        self.end_headers()
 
     def do_GET(self):
         url = urlsplit(self.path)

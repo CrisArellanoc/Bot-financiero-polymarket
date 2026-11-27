@@ -57,6 +57,15 @@ class StakeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             size_for_budget(self.raw, self.book, ".6", "3.00")
 
+    def test_minimum_override_includes_depth_and_rounded_fees(self):
+        self.raw.update(orderMinSize="10",feesEnabled=True,feeSchedule={"rate":.05,"exponent":1,"takerOnly":True})
+        result=size_for_budget(self.raw,self.book,".55","3.00",allow_minimum=True)
+        self.assertEqual(Decimal(result["shares"]),10)
+        self.assertEqual(Decimal(result["total_cost"]),Decimal("5.125"))
+        self.assertTrue(result["minimum_adjusted"])
+        with self.assertRaisesRegex(ValueError,"Profundidad"):
+            size_for_budget(self.raw,{**self.book,"asks":[{"price":".5","size":"9"}]},".55","3.00",allow_minimum=True)
+
     def test_unknown_fees_and_invalid_inputs_fail_closed(self):
         for raw in ({"orderMinSize":"5"}, {**self.raw,"feesEnabled":True},
                     {**self.raw,"feesEnabled":True,"feeSchedule":{"rate":.1,"exponent":True,"takerOnly":True}}):

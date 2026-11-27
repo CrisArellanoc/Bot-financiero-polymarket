@@ -25,6 +25,18 @@ class PaperTests(unittest.TestCase):
         self.ledger.close()
         self.tmp.cleanup()
 
+    def test_daily_control_persists_and_does_not_disable_other_limits(self):
+        from dataclasses import replace
+        limits=replace(self.limits,max_daily_loss_budget="1")
+        self.assertIn("diario",self.ledger.buy(proposal(),limits)["reason"])
+        with self.ledger.db:
+            self.ledger.db.execute("UPDATE paper_controls SET daily_loss_enabled=0")
+        self.assertEqual(self.ledger.buy(proposal(),limits)["status"],"filled_paper")
+        self.ledger.close()
+        self.ledger=PaperLedger(self.path,"100")
+        self.assertEqual(self.ledger.db.execute("SELECT daily_loss_enabled FROM paper_controls").fetchone()[0],0)
+        self.assertIn("Saldo",self.ledger.buy(proposal(market_id="other"),replace(limits,max_order_cost="1"))["reason"])
+
     def test_fill_uses_depth_and_costs(self):
         fill = self.ledger.buy(proposal(), self.limits)
         self.assertEqual(fill['status'], 'filled_paper')
