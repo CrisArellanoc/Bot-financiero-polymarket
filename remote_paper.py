@@ -7,6 +7,7 @@ import live_paper as live
 import paper_audit as audit
 from paper_stake import capital_and_stake, size_for_budget
 from autonomy import number
+import opening_memory
 import service_status
 import btc_reference
 from remote_brain import PROMPT_VERSION, EXPLORATION_VERSION
@@ -101,6 +102,7 @@ class RemoteAgent(live.Agent):
             trend = self.db.execute("SELECT ts,price FROM btc_twap_quotes WHERE ts BETWEEN ? AND ? AND seen<=? ORDER BY ts DESC LIMIT 60",(start-60,start,now)).fetchall()
             if trend:
                 evidence["mensajes"].append(dict(ref="E4",hecho=f"TWAP BTC antes de abrir, en orden temporal (segundo, USD): {trend[::-1]}"))
+            version = opening_memory.add_context(self.db,start,x,evidence)
             hashed = audit.digest(evidence)
             requested_at=time.time()
             with self.db:
