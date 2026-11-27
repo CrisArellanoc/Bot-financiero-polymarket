@@ -26,6 +26,11 @@ def tables(db):
         CREATE TABLE IF NOT EXISTS audit_events(id INTEGER PRIMARY KEY,start INTEGER,at REAL,
             kind TEXT,payload TEXT,previous_hash TEXT,hash TEXT);
     """)
+    # Migración aditiva: los tiempos anteriores quedan desconocidos, no se inventan.
+    columns={row[1] for row in db.execute("PRAGMA table_info(brain_decisions)")}
+    for name,kind in (("requested_at","REAL"),("completed_at","REAL"),("response_valid","INTEGER"),("prompt_version","TEXT")):
+        if name not in columns:
+            db.execute(f"ALTER TABLE brain_decisions ADD COLUMN {name} {kind}")
 
 
 def append(db,start,kind,payload):
@@ -77,8 +82,14 @@ def export(path,start=None):
             requests = [e for e in events if e["start"]==row["start"] and e["kind"]=="brain_request"]
             replies = [e for e in events if e["start"]==row["start"] and e["kind"]=="brain_response"]
             consistent &= bool(requests and isinstance(requests[-1]["payload"],dict) and requests[-1]["payload"].get("evidence_hash")==row["evidence_hash"])
+            if row.get("requested_at") is not None:
+                request_payload=requests[-1]["payload"] if requests and isinstance(requests[-1]["payload"],dict) else {}
+                consistent &= (request_payload.get("requested_at")==row["requested_at"] and
+                               request_payload.get("prompt_version")==row.get("prompt_version"))
             if row["response"] is not None:
                 consistent &= bool(replies and isinstance(replies[-1]["payload"],dict) and replies[-1]["payload"].get("decision_hash")==row["decision_hash"])
+                if row.get("completed_at") is not None:
+                    consistent &= bool(replies and replies[-1]["payload"].get("completed_at")==row["completed_at"])
         attempts = [dict(r) for r in db.execute("SELECT * FROM bet_attempts"+clause+" ORDER BY id",args)]
         orders = [dict(r) for r in db.execute("SELECT * FROM orders"+
                   (" WHERE market_id=?" if start is not None else ""),

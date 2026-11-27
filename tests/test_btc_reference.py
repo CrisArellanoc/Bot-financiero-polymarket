@@ -17,18 +17,16 @@ class ReferenceTests(unittest.TestCase):
             response.__enter__=Mock(return_value=response)
             response.__exit__=Mock(return_value=False)
             with patch("btc_reference.urlopen",return_value=response) as fetch, \
-                 patch("btc_reference.json.load",return_value={"openPrice":price}):
+                 patch("btc_reference.json.load",return_value={"slug":"btc-updown-5m-3000","eventMetadata":{"priceToBeat":price}}):
                 if price == 59960.125:
                     self.assertEqual(btc.target(3000),price)
                 else:
                     with self.assertRaises(ValueError): btc.target(3000)
                 request=fetch.call_args.args[0]
-                self.assertTrue(request.full_url.startswith(btc.SOURCE+"?symbol=BTC&"))
-                self.assertIn("eventStartTime=1970-01-01T00%3A50%3A00Z",request.full_url)
-                self.assertIn("endDate=1970-01-01T00%3A55%3A00Z",request.full_url)
+                self.assertEqual(request.full_url,btc.GAMMA_SOURCE+"btc-updown-5m-3000")
                 self.assertNotIn("Authorization",request.headers)
 
-    def test_reference_is_frozen_and_errors_never_invent_a_price(self):
+    def test_reference_is_rechecked_and_errors_never_invent_a_price(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/"paper.sqlite"
             agent=Agent(path)
@@ -41,9 +39,10 @@ class ReferenceTests(unittest.TestCase):
                 self.assertEqual(get.call_count,2)
                 self.assertEqual(snapshot(path,3000)["btc"]["target"]["price"],59960.)
                 stop.is_set.side_effect=[False,True]
-                with patch("btc_reference.time.time",return_value=3006),patch("btc_reference.target") as get:
+                with patch("btc_reference.time.time",return_value=3006),patch("btc_reference.target",return_value=59962.) as get:
                     btc.collect(path,stop)
-                    get.assert_not_called()
+                    self.assertEqual(get.call_count,1)
+                self.assertEqual(snapshot(path,3000)["btc"]["target"]["price"],59962.)
                 self.assertIsNone(snapshot(path,3300)["btc"]["target"])
             finally: agent.ledger.close()
 
@@ -148,3 +147,11 @@ class ReferenceTests(unittest.TestCase):
                 service_status.initialize(agent.db)
                 self.assertEqual(snapshot(path)["teacher"],[])
             finally: agent.ledger.close()
+
+    def test_reference_of_another_market_is_never_used(self):
+        response=Mock()
+        response.__enter__=Mock(return_value=response)
+        response.__exit__=Mock(return_value=False)
+        with patch('btc_reference.urlopen',return_value=response),patch('btc_reference.json.load',return_value={
+            'slug':'btc-updown-5m-3300','eventMetadata':{'priceToBeat':60000}}):
+            with self.assertRaisesRegex(ValueError,'otro intervalo'):btc.target(3000)

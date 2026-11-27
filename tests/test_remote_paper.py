@@ -4,6 +4,7 @@ from unittest.mock import Mock,patch
 from remote_paper import RemoteAgent
 from live_paper import snapshot
 import paper_audit as audit
+import btc_reference as btc
 
 class RemotePaperTests(unittest.TestCase):
  def setUp(self):
@@ -13,7 +14,7 @@ class RemotePaperTests(unittest.TestCase):
   self.addCleanup(self.temp.cleanup);self.addCleanup(self.agent.ledger.close)
   with self.db:
    self.db.executemany('INSERT INTO ticks VALUES(?,?,?,?,?,?,?)',[(3000,t,t-1,.48,.50,3,2) for t in (2980,2996)])
-   self.db.execute("INSERT INTO btc_targets VALUES(3000,3001,60000,'Polymarket')")
+   self.db.execute("INSERT INTO btc_targets VALUES(3000,3001,60000,?)",(btc.GAMMA_SOURCE,))
    self.db.execute("INSERT INTO btc_twap_quotes VALUES(2999,3000,60001,'Polymarket','60001')")
   self.book=dict(min_order_size='5',asks=[dict(price='.50',size='50')]);self.raw=dict(orderMinSize=5,feesEnabled=False)
   self.view=dict(active=True,closed=False,accepting_orders=True)
@@ -101,3 +102,17 @@ class RemotePaperTests(unittest.TestCase):
    self.assertEqual(data['orders'][0]['cost'],'3.00000000')
    self.assertEqual(data['mode'],'paper')
   finally:server.shutdown();server.server_close();worker.join()
+
+ def test_reference_correction_during_llm_call_rejects_without_rewriting_evidence(self):
+  def changed(evidence,timeout):
+   with self.db:self.db.execute('UPDATE btc_targets SET price=60002 WHERE start=3000')
+   return dict(action='Up',p_up=.8,reason='E1 sustenta Up',refs=['E1'])
+  self.brain.decide.side_effect=changed
+  self.decide()
+  data=snapshot(self.path)
+  self.assertEqual(data['bet_attempts'][0]['status'],'rejected')
+  self.assertEqual(self.agent.ledger.cash,100)
+  record=audit.export(self.path,3000)['decisions'][0]
+  self.assertEqual(record['evidence']['price_to_beat']['price'],60000)
+  self.assertTrue(record['prompt_version'].startswith('llm-paper-v2:'))
+  self.assertEqual(record['completed_at']-record['requested_at'],0)

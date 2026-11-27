@@ -21,6 +21,7 @@ import service_status
 import yahoo_predictor
 import btc_reference
 import paper_audit
+import evaluation
 from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
 from settings import load_settings
 from autonomy import Limits, PaperLedger, number
@@ -380,7 +381,9 @@ def snapshot(path, selected=None):
             yahoo_model[0]["report"] = json.loads(yahoo_model[0]["report"])
         yahoo_forecast = rows("SELECT start,ready,p,model,detail FROM yahoo_predictions WHERE start=?",(focus,))
         yahoo_status = rows("SELECT at,detail FROM yahoo_status WHERE id=1")
-        btc = dict(target=next(iter(rows("SELECT seen,price,source FROM btc_targets WHERE start=?",(focus,))),None),
+        btc = dict(target=next(iter(rows("""SELECT t.seen,t.price,t.source,m.kind,m.reference_ts,m.checked_at
+                    FROM btc_targets t LEFT JOIN btc_target_meta m USING(start)
+                    WHERE t.start=? AND t.source IN (?,?)""",(focus,btc_reference.GAMMA_SOURCE,btc_reference.OPENING_TWAP_SOURCE))),None),
                    quotes=rows("SELECT ts,seen,price,source FROM btc_twap_quotes WHERE ts>=? AND ts<? ORDER BY ts",(focus,focus+300)),
                    feed=next(iter(rows("SELECT state,at,last_ok,detail FROM btc_feed_status WHERE id=1")),None),
                    forecast=next(iter(rows("SELECT ready,price,anchor,model,detail FROM yahoo_price_predictions WHERE start=?",(focus,))),None),
@@ -407,7 +410,7 @@ def snapshot(path, selected=None):
         return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
                     yahoo=dict(model=next(iter(yahoo_model),None),forecast=next(iter(yahoo_forecast),None),
                                status=next(iter(yahoo_status),None),metrics=yahoo_metrics),
-                    brain=brain,bet_attempts=attempts,portfolio=portfolio,services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
+                    evaluation=evaluation.snapshot(db),brain=brain,bet_attempts=attempts,portfolio=portfolio,services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
                     prices=prices,laya=next(iter(prediction),None),comparison=comparison,
                     laya_status=state[0] if state else "Esperando inicio",
                     observer=next(iter(observer), None), notes=notes,

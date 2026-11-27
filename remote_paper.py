@@ -8,6 +8,8 @@ import paper_audit as audit
 from paper_stake import capital_and_stake, size_for_budget
 from autonomy import number
 import service_status
+import btc_reference
+from remote_brain import PROMPT_VERSION
 
 
 class RemoteAgent(live.Agent):
@@ -19,6 +21,10 @@ class RemoteAgent(live.Agent):
         # Un reinicio no repite una consulta ni una compra pendiente.
         for start, in self.db.execute("SELECT start FROM bet_attempts WHERE status='pending'").fetchall():
             order = self.db.execute("SELECT cost FROM orders WHERE market_id=?",(live.slug(start),)).fetchone()
+            with self.db:
+                if not order:
+                    self.db.execute("UPDATE brain_decisions SET status='error',response_valid=0,detail='Consulta interrumpida por reinicio; duración desconocida' WHERE start=? AND status='pending'",(start,))
+                    audit.append(self.db,start,"brain_interrupted",dict(reason="Reinicio sin respuesta; no se inventa tiempo de finalización"))
             self.finish(start,"filled_paper" if order else "rejected",
                         "Recibo recuperado tras reiniciar" if order else "Consulta interrumpida por reinicio; no se repite",
                         actual_cost=order[0] if order else None)
@@ -45,7 +51,7 @@ class RemoteAgent(live.Agent):
         if start <= now < start+12 and self.brain:
             # La referencia se publica al abrir. Esperar su llegada evita rechazar
             # por una carrera entre el hilo de datos y el corte de apertura.
-            target_ready = self.db.execute("SELECT 1 FROM btc_targets WHERE start=? AND seen<=?",(start,now)).fetchone()
+            target_ready = self.db.execute("SELECT 1 FROM btc_targets WHERE start=? AND seen<=? AND source IN (?,?)",(start,now,btc_reference.GAMMA_SOURCE,btc_reference.OPENING_TWAP_SOURCE)).fetchone()
             if not target_ready:
                 self.status("waiting","Esperando el precio a superar oficial dentro de la ventana de apertura")
                 return
@@ -63,7 +69,7 @@ class RemoteAgent(live.Agent):
                 raise ValueError("API del profesor no configurada; se abstiene sin usar modelos locales")
             ticks = self.db.execute("SELECT seen,ts,bid,ask,bid_size,ask_size FROM ticks WHERE start=?",(start,)).fetchall()
             x,available = live.ml.features(ticks,start)  # Indicadores deterministas; ninguna red local.
-            target = self.db.execute("SELECT seen,price FROM btc_targets WHERE start=? AND seen<=?",(start,now)).fetchone()
+            target = self.db.execute("SELECT seen,price,source FROM btc_targets WHERE start=? AND seen<=? AND source IN (?,?)",(start,now,btc_reference.GAMMA_SOURCE,btc_reference.OPENING_TWAP_SOURCE)).fetchone()
             quote = self.db.execute("""SELECT ts,seen,price FROM btc_twap_quotes
                 WHERE ts<=? AND seen<=? ORDER BY ts DESC LIMIT 1""",(start,now)).fetchone()
             if target is None or quote is None or start-quote[0] > 10:
@@ -72,9 +78,10 @@ class RemoteAgent(live.Agent):
                 SELECT f.start,f.winner,f.p,f.version,o.pnl FROM forecasts f
                 LEFT JOIN orders o ON o.market_id=('btc-updown-5m-'||f.start)
                 WHERE f.labeled<=? AND f.winner IS NOT NULL ORDER BY f.start DESC LIMIT 8""",(start,))]
-            evidence = dict(mercado=live.slug(start),start=start,end=start+300,as_of=now,modo="paper",
+            evidence = dict(mercado=live.slug(start),start=start,end=start+300,as_of=now,modo="paper",prompt_version=PROMPT_VERSION,
                             opening_features=dict(zip(live.ml.FEATURES,x)),inputs_available_at=available,
-                            price_to_beat=dict(price=target[1],received=target[0]),
+                            price_to_beat=dict(price=target[1],received=target[0],source=target[2],reference_ts=start,
+                                               gamma_confirmed=target[2]==btc_reference.GAMMA_SOURCE),
                             btc_twap=dict(timestamp=quote[0],received=quote[1],price=quote[2]),
                             cartera=dict(capital=str(capital),stake=str(stake),stake_fraction="0.03"),
                             resultados_oficiales_previos=history,
@@ -83,6 +90,7 @@ class RemoteAgent(live.Agent):
                                       dict(ref="E2",hecho=f"Capital contable {capital} USD; presupuesto incluido costos {stake} USD."),
                                       dict(ref="E3",hecho=f"Historial disponible: {len(history)} resultados oficiales previos. No modifica los pesos del LLM.")])
             hashed = audit.digest(evidence)
+            requested_at=time.time()
             with self.db:
                 self.db.execute("INSERT INTO forecasts(start,x,seen,version,eligible) VALUES(?,?,?,'LLM pendiente',0)",
                                 (start,live.dump(x),available))
@@ -90,7 +98,10 @@ class RemoteAgent(live.Agent):
                     VALUES(?,?,NULL,?,'pending','Consultando API',?,?)""",
                                 (start,now,self.brain.name,audit.canonical(evidence),hashed))
                 self.db.execute("UPDATE bet_attempts SET evidence_hash=? WHERE start=?",(hashed,start))
-                audit.append(self.db,start,"brain_request",dict(evidence=evidence,evidence_hash=hashed))
+                self.db.execute("UPDATE brain_decisions SET requested_at=?,prompt_version=? WHERE start=?",
+                                (requested_at,PROMPT_VERSION,start))
+                audit.append(self.db,start,"brain_request",dict(evidence=evidence,evidence_hash=hashed,
+                             requested_at=requested_at,prompt_version=PROMPT_VERSION))
                 self.emit(start,"Libro","LLM","Evidencia de apertura enviada al servidor",evidence_hash=hashed,datos=evidence)
             self.status("busy","LLM remoto analizando la apertura")
             service_status.teacher(self.db,"brain","busy")
@@ -104,9 +115,11 @@ class RemoteAgent(live.Agent):
                                  audit.canonical(answer),response_hash,start))
                 self.db.execute("UPDATE bet_attempts SET model=?,decision_hash=? WHERE start=?",
                                 (self.brain.name,response_hash,start))
+                self.db.execute("UPDATE brain_decisions SET completed_at=?,response_valid=1 WHERE start=?",(ready,start))
                 self.db.execute("UPDATE forecasts SET p=?,version=?,eligible=? WHERE start=?",
                                 (answer["p_up"],"LLM · "+self.brain.name,int(answer["action"]!="abstain"),start))
-                audit.append(self.db,start,"brain_response",dict(response=answer,decision_hash=response_hash,model=self.brain.name))
+                audit.append(self.db,start,"brain_response",dict(response=answer,decision_hash=response_hash,model=self.brain.name,
+                             completed_at=ready,response_valid=True))
                 self.emit(start,"LLM","Riesgo","Decisión remota recibida",accion=answer["action"],p_up=answer["p_up"],
                           justificacion=answer["reason"],refs=answer["refs"],decision_hash=response_hash)
             service_status.teacher(self.db,"brain","ok",True)
@@ -117,6 +130,10 @@ class RemoteAgent(live.Agent):
                 self.finish(start,"abstained","Abstención del LLM: "+answer["reason"])
                 return
             side = answer["action"]
+            current_target=self.db.execute("SELECT price FROM btc_targets WHERE start=? AND source IN (?,?)",
+                (start,btc_reference.GAMMA_SOURCE,btc_reference.OPENING_TWAP_SOURCE)).fetchone()
+            if current_target is None or abs(number(current_target[0])-number(target[1]))>number("0.000001"):
+                raise ValueError("El precio a superar se corrigió durante la consulta; se rechaza para no apostar con una referencia anterior")
             probability = number(answer["p_up"]) if side == "Up" else 1-number(answer["p_up"])
             _,view,raw = live.market_for(start)
             live.must_be_open(view)
@@ -144,6 +161,12 @@ class RemoteAgent(live.Agent):
         except live.API_ERRORS as exc:
             reason = str(exc)
             with self.db:
+                failed_at=time.time()
+                pending_call=self.db.execute("SELECT 1 FROM brain_decisions WHERE start=? AND requested_at IS NOT NULL AND completed_at IS NULL",(start,)).fetchone()
+                if pending_call:
+                    audit.append(self.db,start,"brain_failure",dict(completed_at=failed_at,response_valid=False,reason=reason))
+                self.db.execute("""UPDATE brain_decisions SET completed_at=?,response_valid=0
+                    WHERE start=? AND requested_at IS NOT NULL AND completed_at IS NULL""",(failed_at,start))
                 self.db.execute("INSERT OR IGNORE INTO forecasts(start,decision) VALUES(?,?)",(start,reason))
                 self.db.execute("UPDATE brain_decisions SET status=CASE WHEN status='pending' THEN 'error' ELSE status END,detail=? WHERE start=?",(reason,start))
             if self.db.execute("SELECT status FROM brain_decisions WHERE start=?",(start,)).fetchone() == ("error",):

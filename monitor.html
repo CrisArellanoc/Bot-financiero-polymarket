@@ -439,6 +439,34 @@
         color: #9eafc3;
         margin: 6px 0;
       }
+      .eval-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .eval-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+      .eval-table th,
+      .eval-table td {
+        text-align: left;
+        padding: 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      .eval-chart {
+        width: 100%;
+        height: 240px;
+      }
+      .eval-scroll {
+        overflow-x: auto;
+      }
+      @media (max-width: 760px) {
+        .eval-grid {
+          grid-template-columns: 1fr;
+        }
+      }
       footer {
         margin-top: 25px;
         padding-top: 16px;
@@ -728,7 +756,10 @@
         <article>
           <div class="bar">
             <h2>BTC / USD · Mercado de 5 minutos</h2>
-            <small id="interval"></small>
+            <small id="interval"></small
+            ><a id="marketReferenceLink" class="audit-link" target="_blank" rel="noopener"
+              >Ver este intervalo en Polymarket</a
+            >
           </div>
           <div class="chart-values">
             <div><small>Precio a superar · Polymarket</small><strong id="btcTarget">—</strong></div>
@@ -831,6 +862,137 @@
           </div>
           <p id="observerNote"></p>
           <small id="observerStatus"></small>
+        </article>
+      </section>
+      <section id="evaluationPanel">
+        <article class="stack">
+          <div class="bar">
+            <h2>Evaluación prospectiva del LLM</h2>
+            <label
+              >Versión
+              <select id="evaluationVersion">
+                <option value="all">Todo el historial remoto</option>
+              </select></label
+            >
+          </div>
+          <p id="evaluationScope" class="muted"></p>
+          <div class="metrics">
+            <div class="metric">
+              <small>Mejora Brier frente al libro</small><strong id="evalSkill">—</strong>
+            </div>
+            <div class="metric">
+              <small>Resultado medio por apuesta</small><strong id="evalMean">—</strong>
+            </div>
+            <div class="metric">
+              <small>Drawdown realizado · cartera global</small><strong id="evalDrawdown">—</strong>
+            </div>
+            <div class="metric">
+              <small>Cobertura de señales</small><strong id="evalCoverage">—</strong>
+            </div>
+          </div>
+          <div class="eval-grid">
+            <div>
+              <h3>Calibración de las puntuaciones</h3>
+              <svg
+                id="evalCalibration"
+                class="eval-chart"
+                role="img"
+                aria-label="Puntuación Up frente a frecuencia oficial Up por deciles"
+              ></svg>
+              <small
+                >Diagonal: correspondencia ideal. Cada punto muestra el número de mercados al pasar
+                el cursor. ECE depende de estos 10 grupos y del tamaño de muestra.</small
+              >
+            </div>
+            <div>
+              <h3>Capital realizado · cartera global</h3>
+              <svg
+                id="evalEquity"
+                class="eval-chart"
+                role="img"
+                aria-label="Capital realizado de toda la cartera simulada"
+              ></svg>
+              <small
+                >Incluye apuestas históricas de otras versiones. Sin revalorar posiciones
+                pendientes. La curva puede compactarse visualmente; el drawdown usa todas las
+                liquidaciones.</small
+              >
+            </div>
+            <div>
+              <h3>Predicción y referencias</h3>
+              <table class="eval-table">
+                <tbody id="evalPrediction"></tbody>
+              </table>
+            </div>
+            <div>
+              <h3>Apuestas y API</h3>
+              <table class="eval-table">
+                <tbody id="evalOperation"></tbody>
+              </table>
+            </div>
+            <div>
+              <h3>Dirección predicha frente al resultado oficial</h3>
+              <table class="eval-table">
+                <thead>
+                  <tr>
+                    <th>Resultado</th>
+                    <th>Predijo Up</th>
+                    <th>Predijo Down</th>
+                  </tr>
+                </thead>
+                <tbody id="evalConfusion"></tbody>
+              </table>
+              <p id="evalUncertainty" class="section-note"></p>
+            </div>
+            <div>
+              <h3>Calibración por decil</h3>
+              <table class="eval-table">
+                <thead>
+                  <tr>
+                    <th>Puntuación</th>
+                    <th>N</th>
+                    <th>Media Up</th>
+                    <th>Up real</th>
+                  </tr>
+                </thead>
+                <tbody id="evalBins"></tbody>
+              </table>
+            </div>
+          </div>
+          <details>
+            <summary>Estabilidad por día, hora y volatilidad del contrato</summary>
+            <p class="section-note">
+              UTC, según apertura. Mismos mercados para las dos columnas Brier cuando hay
+              referencia. Volatilidad: desviación del precio del contrato Up previa a abrir;
+              umbrales fijos 0.005 y 0.02, no volatilidad de BTC en dólares.
+            </p>
+            <div class="eval-scroll">
+              <table class="eval-table">
+                <thead>
+                  <tr>
+                    <th>Grupo</th>
+                    <th>N puntuaciones</th>
+                    <th>N comparables</th>
+                    <th>Brier LLM comparable</th>
+                    <th>Brier libro</th>
+                  </tr>
+                </thead>
+                <tbody id="evalPeriods"></tbody>
+              </table>
+            </div>
+          </details>
+          <p class="section-note">
+            Solo puntuaciones válidas emitidas en los primeros 15 segundos, con entradas previas a
+            la apertura y resultado oficial confirmado. Brier, log loss y calibración incluyen
+            abstenciones con puntuación numérica; acierto y matriz usan señales Up/Down. Las
+            apuestas se evalúan aparte. Los tiempos antiguos sin instrumentación quedan sin medir.
+          </p>
+          <p class="section-note">
+            La referencia histórica usa únicamente resultados publicados antes de cada apertura, con
+            suavizado inicial. Estos indicadores describen resultados; no calibran el LLM ni ajustan
+            umbrales automáticamente. Un historial pequeño o elegir la mejor versión
+            retrospectivamente no demuestra ventaja estable.
+          </p>
         </article>
       </section>
       <details class="probability-panel">
@@ -1801,6 +1963,8 @@
                 maximumFractionDigits: 2,
               })
         set("btcTarget", usd(btc.target?.price))
+        el("btcTarget").title =
+          "btc-updown-5m-" + s.focus + " · " + (btc.target?.source ?? "referencia pendiente")
         set("btcCurrent", usd(lastBtc?.price))
         set("btcPrediction", usd(priceForecast?.price))
         el("btcPrediction").parentElement.hidden = !!s.brain
@@ -1815,7 +1979,11 @@
                 : "Polymarket · TWAP 60 s · ") + local(lastBtc.ts)
             : "Esperando el flujo BTC de Polymarket.") +
             (btc.target
-              ? " · Referencia Polymarket recibida " + local(btc.target.seen)
+              ? " · " +
+                (btc.target.kind === "confirmed"
+                  ? "Precio a superar confirmado por Gamma · "
+                  : "TWAP exacto de apertura, esperando Gamma · ") +
+                local(btc.target.seen)
               : " · Precio a superar pendiente de publicación."),
         )
         set(
@@ -1937,7 +2105,258 @@
           root.append(card)
         }
       }
+      let latestEvaluation = null,
+        evaluationSignature = ""
+      const evalNumber = (v, d = 4) => (v == null ? "—" : Number(v).toFixed(d))
+      function evalRows(id, rows) {
+        const body = el(id)
+        body.replaceChildren()
+        for (const values of rows) {
+          const row = node("tr")
+          for (const value of values) row.append(node("td", value))
+          body.append(row)
+        }
+      }
+      function evalSvg(id) {
+        const svg = el(id)
+        svg.replaceChildren()
+        svg.setAttribute("viewBox", "0 0 420 240")
+        const add = (tag, attrs, text) => {
+          const n = document.createElementNS("http://www.w3.org/2000/svg", tag)
+          for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v)
+          if (text != null) n.textContent = text
+          svg.append(n)
+          return n
+        }
+        return add
+      }
+      function drawCalibration(bins) {
+        const add = evalSvg("evalCalibration"),
+          x = (p) => 45 + 350 * p,
+          y = (p) => 200 - 180 * p
+        for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+          add("line", { x1: 45, x2: 395, y1: y(v), y2: y(v), stroke: "#273141" })
+          add(
+            "text",
+            { x: 38, y: y(v) + 4, fill: "#8e9cae", "font-size": 11, "text-anchor": "end" },
+            Math.round(v * 100) + "%",
+          )
+          add(
+            "text",
+            { x: x(v), y: 220, fill: "#8e9cae", "font-size": 11, "text-anchor": "middle" },
+            Math.round(v * 100) + "%",
+          )
+        }
+        add("line", {
+          x1: x(0),
+          y1: y(0),
+          x2: x(1),
+          y2: y(1),
+          stroke: "#8e9cae",
+          "stroke-dasharray": "5 5",
+        })
+        let total = 0
+        for (const b of bins ?? [])
+          if (b.n && b.predicted != null && b.observed != null) {
+            total += b.n
+            const dot = add("circle", {
+              cx: x(b.predicted),
+              cy: y(b.observed),
+              r: Math.min(9, 4 + Math.log10(1 + b.n)),
+              fill: "#94b9ff",
+            })
+            const title = document.createElementNS("http://www.w3.org/2000/svg", "title")
+            title.textContent = `N ${b.n} · puntuación ${pct(b.predicted)} · Up real ${pct(b.observed)}`
+            dot.append(title)
+          }
+        if (!total)
+          add(
+            "text",
+            { x: 210, y: 110, fill: "#8e9cae", "font-size": 13, "text-anchor": "middle" },
+            "Esperando puntuaciones con resultado oficial",
+          )
+      }
+      function drawEquity(portfolio) {
+        const add = evalSvg("evalEquity"),
+          rows = portfolio?.curve ?? []
+        if (!portfolio?.settled) {
+          add(
+            "text",
+            { x: 210, y: 110, fill: "#8e9cae", "font-size": 13, "text-anchor": "middle" },
+            "Esperando liquidaciones de la cartera",
+          )
+          return
+        }
+        const lo = Math.min(...rows.map((r) => r.capital)),
+          hi = Math.max(...rows.map((r) => r.capital)),
+          pad = Math.max(1, (hi - lo) * 0.12)
+        const y = (v) => 200 - (180 * (v - lo + pad)) / (hi - lo + 2 * pad),
+          x = (i) => 78 + (320 * i) / Math.max(1, rows.length - 1)
+        for (const v of [lo, (lo + hi) / 2, hi]) {
+          add("line", { x1: 78, x2: 398, y1: y(v), y2: y(v), stroke: "#273141" })
+          add(
+            "text",
+            { x: 72, y: y(v) + 4, fill: "#8e9cae", "font-size": 11, "text-anchor": "end" },
+            money(v),
+          )
+        }
+        add("path", {
+          d: rows.map((r, i) => (i ? "L " : "M ") + x(i) + " " + y(r.capital)).join(" "),
+          fill: "none",
+          stroke: "#82c8ad",
+          "stroke-width": 2,
+        })
+        add("text", { x: 78, y: 224, fill: "#8e9cae", "font-size": 11 }, "Inicio")
+        add(
+          "text",
+          { x: 398, y: 224, fill: "#8e9cae", "font-size": 11, "text-anchor": "end" },
+          "Última liquidación · secuencia de eventos",
+        )
+      }
+      function renderEvaluation(data) {
+        latestEvaluation = data
+        if (!data) {
+          set(
+            "evaluationScope",
+            "Esperando evaluación del servidor local. Reinicia el programa después de actualizar.",
+          )
+          return
+        }
+        const select = el("evaluationVersion"),
+          keys = ["all", ...data.groups.map((g) => g.key)]
+        const selected = keys.includes(select.value) ? select.value : "all"
+        const signature = JSON.stringify(data) + selected
+        if (signature === evaluationSignature) return
+        evaluationSignature = signature
+        select.replaceChildren(new Option("Todo el historial remoto", "all"))
+        for (const group of data.groups)
+          select.add(new Option(group.model + " · " + group.prompt_version, group.key))
+        select.value = selected
+        const group =
+          selected === "all" ? data.overall : data.groups.find((g) => g.key === selected)
+        const p = group.prediction,
+          t = group.trading,
+          c = group.coverage,
+          a = group.api,
+          port = data.portfolio
+        set(
+          "evaluationScope",
+          `${p.n} puntuaciones con etiqueta oficial · ${p.classification_n} señales Up/Down evaluadas · ${t.settled} apuestas liquidadas. ` +
+            (selected === "all"
+              ? "Resumen conjunto: usa el selector para separar modelos y prompts."
+              : "Versión seleccionada. No compara versiones sobre periodos idénticos automáticamente."),
+        )
+        set("evalSkill", pct(p.brier_skill))
+        set("evalMean", t.mean_net == null ? "—" : money(t.mean_net))
+        set("evalCoverage", pct(c.signal_rate))
+        set("evalDrawdown", port.settled ? pct(port.max_drawdown_pct) : "—")
+        drawCalibration(p.calibration)
+        drawEquity(port)
+        evalRows("evalPrediction", [
+          ["Brier · todas las puntuaciones", evalNumber(p.brier) + ` · N ${p.n}`],
+          ["Log loss · menor es mejor", evalNumber(p.log_loss)],
+          [
+            "Brier LLM / libro · mismos mercados",
+            evalNumber(p.brier_common) + " / " + evalNumber(p.market_brier) + ` · N ${p.market_n}`,
+          ],
+          ["Brier · referencia histórica previa", evalNumber(p.prior_brier)],
+          ["ECE · error por deciles", pct(p.ece)],
+          ["Acierto de señales Up/Down", pct(p.accuracy) + ` · N ${p.classification_n}`],
+          [
+            "Acierto libro · mercados comparables",
+            pct(p.market_accuracy) + ` · N ${p.action_market_n}`,
+          ],
+          ["Acierto referencia histórica previa", pct(p.prior_accuracy)],
+          ["Acierto balanceado", pct(p.balanced_accuracy)],
+          ["Precisión Up / Down", pct(p.precision_up) + " / " + pct(p.precision_down)],
+          ["Sensibilidad Up / Down", pct(p.recall_up) + " / " + pct(p.recall_down)],
+          ["F1 Up / Down", evalNumber(p.f1_up, 3) + " / " + evalNumber(p.f1_down, 3)],
+        ])
+        evalRows("evalOperation", [
+          ["Resultado neto · apuestas de la selección", money(t.net)],
+          [
+            "Profit factor",
+            t.profit_factor != null
+              ? evalNumber(t.profit_factor, 3)
+              : t.profit_factor_status === "no_losses"
+                ? "Sin pérdidas: no definido"
+                : "Sin resultados",
+          ],
+          ["Victorias / pérdidas netas", `${t.wins} / ${t.losses} · acierto ${pct(t.win_rate)}`],
+          ["Racha máxima de pérdidas", t.settled ? String(t.max_losing_streak) : "—"],
+          ["Drawdown global realizado · USD", port.settled ? money(port.max_drawdown_usd) : "—"],
+          [
+            "Resultado esperado medio · subjetivo",
+            group.mean_estimated_net == null ? "—" : money(group.mean_estimated_net),
+          ],
+          [
+            "Intervalos / señales / abstenciones",
+            `${c.intervals} / ${c.signals} / ${c.abstentions}`,
+          ],
+          ["Errores API / respuestas tardías", `${c.api_failures} / ${c.late_responses}`],
+          [
+            "Rechazos tras señal válida / preparando",
+            `${c.risk_rejections} / ${c.statuses.pending}`,
+          ],
+          ["Consultas / terminadas / válidas", `${a.requests} / ${a.completed} / ${a.valid}`],
+          ["Respuestas válidas / dentro de plazo", pct(a.valid_rate) + " / " + pct(a.on_time_rate)],
+          [
+            "Latencia mediana / percentil 95",
+            evalNumber(a.median_seconds, 3) + " / " + evalNumber(a.p95_seconds, 3) + " s",
+          ],
+          ["Consultas interrumpidas · sin duración", String(a.interrupted ?? 0)],
+          ["Registros sin instrumentación temporal", String(a.timing_unknown)],
+        ])
+        const matrix = p.confusion
+        evalRows("evalConfusion", [
+          ["Up", String(matrix.actual_up_pred_up), String(matrix.actual_up_pred_down)],
+          ["Down", String(matrix.actual_down_pred_up), String(matrix.actual_down_pred_down)],
+        ])
+        const ci = p.improvement_ci,
+          netCI = t.mean_net_ci
+        const interval = (v, usd = false) =>
+          v.low == null
+            ? `sin intervalo (${v.blocks} días, se requieren al menos 2)`
+            : (usd
+                ? money(v.low) + " a " + money(v.high)
+                : evalNumber(v.low) + " a " + evalNumber(v.high)) + ` · ${v.blocks} días`
+        set(
+          "evalUncertainty",
+          "Mejora absoluta Brier (libro menos LLM), IC descriptivo 95%: " +
+            interval(ci) +
+            ". Resultado medio por apuesta: " +
+            interval(netCI, true) +
+            ". Bootstrap de días completos (300 réplicas cuando hay datos); no corrige selección de versiones ni garantiza independencia entre días.",
+        )
+        evalRows(
+          "evalBins",
+          p.calibration.map((b) => [
+            `${Math.round(b.lower * 100)}–${Math.round(b.upper * 100)}%`,
+            String(b.n),
+            pct(b.predicted),
+            pct(b.observed),
+          ]),
+        )
+        const periods = []
+        for (const [label, rows] of [
+          ["Día UTC", group.daily],
+          ["Hora UTC", group.hourly],
+          ["Volatilidad Up", group.regimes],
+        ])
+          for (const row of rows)
+            periods.push([
+              label + " · " + row.period,
+              String(row.n),
+              String(row.market_n),
+              evalNumber(row.brier_common),
+              evalNumber(row.market_brier),
+            ])
+        evalRows("evalPeriods", periods)
+      }
+      el("evaluationVersion").addEventListener("change", () => renderEvaluation(latestEvaluation))
+
       function render(s) {
+        renderEvaluation(s.evaluation)
         const portfolio = s.portfolio
         if (portfolio) {
           set(
@@ -2016,6 +2435,7 @@
         set("orders", a.orders)
         set("labels", a.labeled + " / " + a.predictions)
         set("interval", local(s.focus, true))
+        el("marketReferenceLink").href = "https://polymarket.com/event/btc-updown-5m-" + s.focus
         chart(s)
         set(
           "layaSignal",

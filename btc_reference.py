@@ -1,16 +1,16 @@
 """Referencia y TWAP público de Polymarket. Sin credenciales de inferencia."""
 from contextlib import closing
-from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import json
 import math
 import sqlite3
 import time
-from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 SOURCE = "https://polymarket.com/api/crypto/crypto-price"
+GAMMA_SOURCE = "https://gamma-api.polymarket.com/events/slug/"
+OPENING_TWAP_SOURCE = "Polymarket RTDS · Chainlink TWAP 60 s · apertura exacta"
 STREAM = "wss://ws-live-data.polymarket.com"
 TOPIC = "crypto_prices_twap_sixty"
 QUOTE_SOURCE = "Polymarket RTDS · Chainlink TWAP 60 s"
@@ -20,6 +20,9 @@ def tables(db):
     db.executescript("""
         CREATE TABLE IF NOT EXISTS btc_targets(start INTEGER PRIMARY KEY,seen REAL,price REAL,source TEXT);
         CREATE TABLE IF NOT EXISTS btc_target_status(id INTEGER PRIMARY KEY CHECK(id=1),at REAL,detail TEXT);
+        CREATE TABLE IF NOT EXISTS btc_target_meta(start INTEGER PRIMARY KEY,kind TEXT,reference_ts REAL,checked_at REAL);
+        CREATE TABLE IF NOT EXISTS btc_target_revisions(id INTEGER PRIMARY KEY,start INTEGER,seen REAL,
+            price REAL,source TEXT,previous_price REAL);
         CREATE TABLE IF NOT EXISTS btc_quotes(ts REAL PRIMARY KEY,seen REAL,price REAL,source TEXT);
         CREATE TABLE IF NOT EXISTS btc_twap_quotes(
             ts REAL PRIMARY KEY,seen REAL,price REAL,source TEXT,raw_value TEXT);
@@ -130,9 +133,8 @@ def stream(path, stop):
 def target(start):
     if start % 300:
         raise ValueError("Intervalo BTC inválido")
-    iso = lambda t: datetime.fromtimestamp(t,timezone.utc).isoformat().replace("+00:00","Z")
-    query = urlencode(dict(symbol="BTC",eventStartTime=iso(start),endDate=iso(start+300),variant="fiveminute"))
-    request = Request(SOURCE+"?"+query,headers={"Accept":"application/json","User-Agent":"BTC-Research/1.0"})
+    expected_slug = "btc-updown-5m-"+str(start)
+    request = Request(GAMMA_SOURCE+expected_slug,headers={"Accept":"application/json","User-Agent":"BTC-Research/1.0","Cache-Control":"no-cache"})
     try:
         with urlopen(request,timeout=10) as response:
             raw = json.load(response)
@@ -141,26 +143,52 @@ def target(start):
         raise ValueError("Consulta pública de referencia no disponible") from None
     if not isinstance(raw,dict):
         raise ValueError("Formato público de referencia inesperado")
-    value = raw.get("openPrice")
+    if raw.get("slug") != expected_slug:
+        raise ValueError("Gamma devolvió una referencia de otro intervalo")
+    metadata=raw.get("eventMetadata")
+    value = metadata.get("priceToBeat") if isinstance(metadata,dict) else None
     if isinstance(value,bool) or not isinstance(value,(float,int)) or not math.isfinite(value) or value <= 0:
         raise ValueError("Polymarket aún no publica el precio a superar")
     return float(value)
+
+
+def refresh_target(db,start):
+    observed=time.time()
+    try:
+        price=target(start)
+        source,kind=GAMMA_SOURCE,"confirmed"
+    except (OSError,ValueError,TypeError,KeyError):
+        # No se aproxima con el primer tick posterior ni con un open spot.
+        exact=db.execute("SELECT price FROM btc_twap_quotes WHERE ts=? AND seen<=?",(start,observed)).fetchone()
+        if exact is None:
+            return False
+        price,source,kind=exact[0],OPENING_TWAP_SOURCE,"opening_twap"
+    old=db.execute("SELECT price,source FROM btc_targets WHERE start=?",(start,)).fetchone()
+    if old and old[1]==GAMMA_SOURCE and source!=GAMMA_SOURCE:
+        return True
+    with db:
+        if old is None or old[0]!=price or old[1]!=source:
+            db.execute("INSERT INTO btc_target_revisions(start,seen,price,source,previous_price) VALUES(?,?,?,?,?)",
+                       (start,observed,price,source,old[0] if old else None))
+            db.execute("INSERT OR REPLACE INTO btc_targets VALUES(?,?,?,?)",(start,observed,price,source))
+        db.execute("INSERT OR REPLACE INTO btc_target_meta VALUES(?,?,?,?)",(start,kind,start,observed))
+        db.execute("INSERT OR REPLACE INTO btc_target_status VALUES(1,?,?)",(observed,
+                   "Referencia confirmada por Gamma" if kind=="confirmed" else "TWAP exacto de apertura; esperando confirmación de Gamma"))
+    return True
 
 
 def collect(path, stop):
     with closing(sqlite3.connect(path,timeout=10)) as db:
         while not stop.is_set():
             start = int(time.time())//300*300
-            if not db.execute("SELECT 1 FROM btc_targets WHERE start=?",(start,)).fetchone():
-                try:
-                    price = target(start)
-                    seen = time.time()
-                    with db:
-                        db.execute("INSERT OR IGNORE INTO btc_targets VALUES(?,?,?,?)",(start,seen,price,SOURCE))
-                        db.execute("INSERT OR REPLACE INTO btc_target_status VALUES(1,?,?)",
-                                   (seen,"Referencia publicada por Polymarket"))
-                except (OSError,ValueError,TypeError,KeyError):
-                    with db:
-                        db.execute("INSERT OR REPLACE INTO btc_target_status VALUES(1,?,?)",
-                                   (time.time(),"Referencia pública pendiente. Se reintentará"))
-            stop.wait(min(10,300-time.time()%300))
+            if not refresh_target(db,start):
+                with db:
+                    db.execute("INSERT OR REPLACE INTO btc_target_status VALUES(1,?,?)",
+                               (time.time(),"Esperando precio a superar del intervalo exacto; no se usa openPrice spot"))
+            # Reconciliar también el intervalo anterior cuando Gamma publica su referencia.
+            previous=start-300
+            row=db.execute("SELECT source FROM btc_targets WHERE start=?",(previous,)).fetchone()
+            if row and row[0]!=GAMMA_SOURCE:
+                refresh_target(db,previous)
+            phase=time.time()%300
+            stop.wait(min(2 if phase<15 else 15,300-phase))
