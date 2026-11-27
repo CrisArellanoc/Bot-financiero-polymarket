@@ -50,3 +50,13 @@ test('Un rechazo conserva su motivo y no presenta costo como apuesta hecha',()=>
  f.el('betTab').listeners.click()
  assert.equal(f.el('betDrawer').open,true)
 })
+test('Un recibo ejecutado se actualiza al llegar una pérdida con pago cero',()=>{
+ const f=fixture(),s=state()
+ s.bet_attempts=[{id:1,start:3000,at:3002,status:'filled_paper',actual_cost:'3'}]
+ f.panel.update(s)
+ s.bet_attempts[0].settled_pnl='-3'
+ s.bet_attempts[0].settled_payout='0'
+ f.panel.update(s)
+ assert.match(f.flat(f.el('betAttempts')),/Pérdida · -3.00 USD/)
+ assert.match(f.flat(f.el('betAttempts')),/Pago final\s+0.00 USD/)
+})

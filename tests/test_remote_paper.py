@@ -66,6 +66,20 @@ class RemotePaperTests(unittest.TestCase):
   self.assertEqual(self.agent.ledger.cash,97)
   self.assertEqual(self.brain.decide.call_args.args[0]["modo"],"exploracion_paper")
   self.assertTrue(audit.export(self.path,3000)["receipts_verified"])
+ def test_quote_uses_held_side_depth_after_cost_and_expires(self):
+  from live_paper import record_contract_quote
+  self.decide()
+  book=dict(self.book,bids=[dict(price=".49",size="2"),dict(price=".46",size="4")])
+  with patch("live_paper.time.time",return_value=3050):
+   record_contract_quote(self.db,3000,"Up",self.raw,(book,dict(best_bid=.49,best_ask=.51),3050,3050))
+   order=snapshot(self.path,3000)["portfolio"]["orders"][0]
+   self.assertAlmostEqual(order["sale_pnl"],-.18)
+   self.assertEqual(order["bid"],.49)
+   book["bids"].pop()
+   record_contract_quote(self.db,3000,"Up",self.raw,(book,dict(best_bid=.49,best_ask=None),3050,3050))
+   self.assertNotIn("sale_pnl",snapshot(self.path,3000)["portfolio"]["orders"][0])
+  with patch("live_paper.time.time",return_value=3065):
+   self.assertNotIn("bid",snapshot(self.path,3000)["portfolio"]["orders"][0])
  def test_minimum_cannot_increase_three_percent(self):
   self.raw['orderMinSize']=10
   self.decide()

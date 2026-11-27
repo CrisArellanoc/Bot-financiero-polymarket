@@ -76,7 +76,7 @@ class RemoteWorkerTests(unittest.TestCase):
                 book = ({},{"best_bid":.49,"best_ask":.51},3002,3001)
                 with patch("live_paper.time.time",return_value=3002), \
                      patch("live_paper.market_for",return_value=({},{"slug":"btc-updown-5m-3000"},{})), \
-                     patch("live_paper.orderbook",side_effect=[URLError("sin red"),book]):
+                     patch("live_paper.read_book",side_effect=[URLError("sin red"),book,book,book]):
                     chart_feed(path,stop)
                 services = {item["service"]:item for item in snapshot(path,3000)["services"]}
                 self.assertEqual(services["polymarket"]["state"],"ok")

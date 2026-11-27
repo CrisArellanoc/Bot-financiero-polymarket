@@ -756,12 +756,13 @@
         <article>
           <div class="bar">
             <h2>BTC / USD · Mercado de 5 minutos</h2>
-            <small id="interval"></small
+            <strong id="windowTimer" aria-label="Tiempo restante">—</strong><small id="interval"></small
             ><a id="marketReferenceLink" class="audit-link" target="_blank" rel="noopener"
               >Ver este intervalo en Polymarket</a
             >
           </div>
           <div class="chart-values">
+            <div><small>Comprar participaciones · Polymarket</small><strong id="contractAsks">Up — · Down —</strong></div>
             <div><small>Precio a superar · Polymarket</small><strong id="btcTarget">—</strong></div>
             <div><small>BTC actual · Polymarket</small><strong id="btcCurrent">—</strong></div>
             <div>
@@ -1033,6 +1034,9 @@
                   <th>Mercado</th>
                   <th>Lado</th>
                   <th>Costo USD</th>
+                  <th>Oferta de compra ¢</th>
+                  <th>Ganancia/pérdida si vendes ahora</th>
+                  <th>Pago bruto si gana al cierre</th>
                   <th>Pago USD</th>
                   <th>Resultado neto</th>
                   <th>Estado</th>
@@ -1045,7 +1049,7 @@
           </div>
           <p id="paperEmpty" class="muted"></p>
           <small
-            >El costo incluye comisiones. El capital realizado es capital inicial más resultados
+            >El resultado si vendes ahora descuenta el costo inicial y la comisión de venta usando el volumen comprador del lado adquirido. Un guion indica que falta una valoración ejecutable reciente. Cada participación ganadora al cierre paga $1. El costo incluye comisiones. El capital realizado es capital inicial más resultados
             liquidados; no valora posiciones abiertas al precio de mercado. Se muestran las últimas
             200 apuestas. Victoria/pérdida se refiere al resultado neto.</small
           >
@@ -1892,6 +1896,9 @@
                   "Costo confirmado",
                   executed && record.actual_cost != null ? money(record.actual_cost) : "—",
                 ],
+                ...(executed ? [["Resultado", record.settled_pnl == null ? "Pendiente de liquidación" :
+                  (Number(record.settled_pnl)<0 ? "Pérdida" : Number(record.settled_pnl)>0 ? "Victoria" : "Neutra") + " · " + money(record.settled_pnl)],
+                  ["Pago final", record.settled_payout == null ? "—" : money(record.settled_payout)]] : []),
                 ["Modelo", record.model ?? "—"],
               ])
                 details.append(node("dt", label), node("dd", value))
@@ -2356,7 +2363,17 @@
       }
       el("evaluationVersion").addEventListener("change", () => renderEvaluation(latestEvaluation))
 
+      let timerEnd = null
+      function updateWindowTimer() {
+        if (timerEnd === null) return
+        const seconds = Math.max(0, Math.min(300, Math.ceil(timerEnd - Date.now()/1000)))
+        set("windowTimer", String(Math.floor(seconds/60)).padStart(2,"0")+":"+String(seconds%60).padStart(2,"0"))
+      }
       function render(s) {
+        const asks = new Map((s.contract_quotes || []).map(q => [q.side,q.ask]))
+        set("contractAsks", ["Up","Down"].map(side => side+" "+(asks.get(side)==null ? "—" : (100*asks.get(side)).toFixed(1)+"¢")).join(" · "))
+        timerEnd = s.focus + 300
+        updateWindowTimer()
         const modeTitle = el("paperModeTitle")
         if (modeTitle) modeTitle.textContent = s.portfolio?.exploration ? "Exploración · cartera simulada" : "Terminal de simulación"
         const exits = el("earlySales")
@@ -2391,9 +2408,12 @@
               local(order.end - 300, true),
               order.outcome,
               money(order.cost),
+              order.bid == null ? "—" : (100*order.bid).toFixed(1)+"¢",
+              order.sale_pnl == null ? "—" : money(order.sale_pnl),
+              money(order.shares),
               done ? money(order.payout) : "—",
               done ? money(pnl) : "—",
-              done ? (pnl > 0 ? "Victoria" : pnl < 0 ? "Pérdida" : "Neutra") : "Pendiente",
+              done ? (pnl > 0 ? "Victoria" : pnl < 0 ? "Pérdida" : "Neutra") : (Date.now()/1000 >= order.end ? "Esperando resolución oficial" : "Abierta"),
               done ? money(order.capital_realized) : "—",
             ]) {
               const cell = node("td", value)
@@ -2661,6 +2681,7 @@
       el("window").addEventListener("change", refresh)
       refresh()
       let polling = false
+      setInterval(updateWindowTimer, 250)
       setInterval(async () => {
         if (document.hidden || polling) return
         polling = true

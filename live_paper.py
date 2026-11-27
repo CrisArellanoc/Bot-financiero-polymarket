@@ -24,6 +24,7 @@ import paper_audit
 import evaluation
 from remote_models import RemoteLaya, RemoteSupervisor, RemoteModelError
 from settings import load_settings
+from paper_stake import sale_quote
 from autonomy import Limits, PaperLedger, number
 from market_history import iso, normalize_resolved
 from polymarket_public import CLOB, GAMMA, DataError, get_json, inspect_book, inspect_market
@@ -75,17 +76,41 @@ def must_be_open(view):
         raise DataError("El mercado no acepta órdenes")
 
 
-def orderbook(view, side):
+def read_book(view, side):
     token = view["outcome_ids"][side]
     book = get_json(CLOB, "/book", {"token_id": token})
     observed = time.time()
     top = inspect_book(book, token)
-    if top["best_bid"] is None or top["best_ask"] is None or not 0 < top["best_bid"] <= top["best_ask"] < 1:
-        raise DataError("Faltan cotizaciones válidas de ambos lados")
     timestamp = float(book["timestamp"]) / 1000
     if not -ml.CLOCK_TOLERANCE <= observed - timestamp <= ml.MAX_INPUT_AGE:
         raise DataError("Cotización CLOB vencida o futura")
     return book, top, observed, timestamp
+
+
+def orderbook(view, side):
+    result = read_book(view, side)
+    top = result[1]
+    if top["best_bid"] is None or top["best_ask"] is None or not 0 < top["best_bid"] <= top["best_ask"] < 1:
+        raise DataError("Faltan cotizaciones válidas de ambos lados")
+    return result
+
+
+def record_contract_quote(db, start, side, raw, result):
+    book, top, _, ts = result
+    if ts < start or time.time() >= start+300:
+        raise DataError("Libro fuera del intervalo")
+    position = db.execute("SELECT shares FROM orders WHERE market_id=? AND outcome=? AND settled_at IS NULL",
+                          (slug(start),side)).fetchone()
+    with db:
+        db.execute("INSERT OR REPLACE INTO contract_quotes VALUES(?,?,?,?,?)",
+                   (start,side,ts,top["best_bid"],top["best_ask"]))
+        if position:
+            try:
+                proceeds = str(sale_quote(raw,book,position[0]))
+            except API_ERRORS:
+                proceeds = None
+            db.execute("INSERT OR REPLACE INTO position_marks VALUES(?,?,?,?)",
+                       (slug(start),ts,top["best_bid"],proceeds))
 
 
 def costs(raw, book, limit):
@@ -122,8 +147,23 @@ def chart_feed(path, stop):
             start = int(time.time())//300*300
             try:
                 if cached is None or cached["slug"] != slug(start):
-                    _, cached, _ = market_for(start)
-                _, top, seen, ts = orderbook(cached, "Up")
+                    _, cached, raw = market_for(start)
+                up = None
+                for side in ("Up","Down"):
+                    try:
+                        result = read_book(cached, side)
+                        record_contract_quote(db,start,side,raw,result)
+                        if side == "Up":
+                            up = result
+                    except API_ERRORS:
+                        with db:
+                            db.execute("DELETE FROM contract_quotes WHERE start=? AND side=?",(start,side))
+                            db.execute("DELETE FROM position_marks WHERE market_id IN (SELECT market_id FROM orders WHERE market_id=? AND outcome=?)",(slug(start),side))
+                if up is None:
+                    raise DataError("Libro Up no disponible")
+                _, top, seen, ts = up
+                if top["best_bid"] is None or top["best_ask"] is None:
+                    raise DataError("Libro Up sin ambas cotizaciones")
                 bid, ask = number(top["best_bid"]), number(top["best_ask"])
                 if ask-bid > number("0.10"):
                     trade = get_json(CLOB, "/last-trade-price", {"token_id": cached["outcome_ids"]["Up"]})
@@ -148,6 +188,8 @@ class Agent:
         self.db = self.ledger.db
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS contract_quotes(start INTEGER,side TEXT,ts REAL,bid REAL,ask REAL,PRIMARY KEY(start,side));
+            CREATE TABLE IF NOT EXISTS position_marks(market_id TEXT PRIMARY KEY,ts REAL,bid REAL,proceeds TEXT);
             CREATE TABLE IF NOT EXISTS chart_prices(start INTEGER,seen REAL,price REAL,PRIMARY KEY(start,seen));
             CREATE TABLE IF NOT EXISTS laya_predictions(start INTEGER PRIMARY KEY,ready REAL,p REAL,detail TEXT);
             CREATE TABLE IF NOT EXISTS laya_status(id INTEGER PRIMARY KEY,detail TEXT);
@@ -261,9 +303,9 @@ class Agent:
 
     def resolve(self, now):
         # Reintentos rotativos para que un mercado atrasado no bloquee los siguientes.
-        pending = self.db.execute("""SELECT start FROM forecasts WHERE (p IS NOT NULL OR EXISTS(
+        pending = self.db.execute("""SELECT start FROM forecasts WHERE (EXISTS(SELECT 1 FROM orders o WHERE o.market_id=('btc-updown-5m-'||forecasts.start) AND o.settled_at IS NULL) OR p IS NOT NULL OR EXISTS(
             SELECT 1 FROM yahoo_predictions y WHERE y.start=forecasts.start AND y.p IS NOT NULL)) AND winner IS NULL
-            AND start+300<=? AND checked<=? ORDER BY checked,start LIMIT 3""", (now, now-60)).fetchall()
+            AND start+300<=? AND checked<=? ORDER BY EXISTS(SELECT 1 FROM orders o WHERE o.market_id=('btc-updown-5m-'||forecasts.start) AND o.settled_at IS NULL) DESC,checked,start LIMIT 3""", (now, now-20)).fetchall()
         for (start,) in pending:
             with self.db:
                 self.db.execute("UPDATE forecasts SET checked=? WHERE start=?", (now, start))
@@ -304,7 +346,7 @@ class Agent:
         now = time.time()
         start = int(now)//300*300
         self.decide(start)
-        if 45 < now-start < 165 and now-self.last_maintenance >= 20:
+        if 15 < now-start < 265 and now-self.last_maintenance >= 20:
             self.last_maintenance = now
             self.resolve(now)
             self.train(start)
@@ -338,6 +380,13 @@ def snapshot(path, selected=None):
         summary["cash"] = float(db.execute("SELECT cash FROM account WHERE id=1").fetchone()[0])
         # Capital reconstruido desde el libro contable, sin reiniciar la cuenta.
         ledger = rows("SELECT market_id,outcome,shares,cost,end,settled_at,payout,pnl FROM orders ORDER BY end,market_id")
+        for order in ledger:
+            if order["settled_at"] is None and order["end"] > time.time():
+                mark = db.execute("SELECT ts,bid,proceeds FROM position_marks WHERE market_id=?",(order["market_id"],)).fetchone()
+                if mark and mark["ts"] is not None and 0 <= time.time()-mark["ts"] <= LIMITS.max_book_age_seconds:
+                    order["bid"] = mark["bid"]
+                    if mark["proceeds"] is not None:
+                        order["sale_pnl"] = float(number(mark["proceeds"])-number(order["cost"]))
         exposure = sum((number(r["cost"]) for r in ledger if r["settled_at"] is None),number(0))
         realized = sum((number(r["pnl"]) for r in ledger if r["pnl"] is not None),number(0))
         initial = number(str(summary["cash"])) + exposure - realized
@@ -360,7 +409,7 @@ def snapshot(path, selected=None):
         brain_status = rows("SELECT at,state,detail,model FROM brain_status WHERE id=1")
         brain_decision = rows("SELECT start,ready,p_up,action,rationale,model,status,detail FROM brain_decisions WHERE start=?",(focus,))
         brain = dict(status=next(iter(brain_status),None),decision=next(iter(brain_decision),None)) if brain_status else None
-        attempts = rows("SELECT * FROM bet_attempts ORDER BY id DESC LIMIT 200")
+        attempts = rows("SELECT b.*,o.pnl AS settled_pnl,o.payout AS settled_payout FROM bet_attempts b LEFT JOIN orders o ON o.market_id=('btc-updown-5m-'||b.start) ORDER BY b.id DESC LIMIT 200")
         models = rows("SELECT n,ready,report FROM models ORDER BY n DESC LIMIT 1")
         if models:
             models[0]["report"] = json.loads(models[0]["report"])
@@ -410,7 +459,7 @@ def snapshot(path, selected=None):
             LEFT JOIN laya_sources s USING(start)
             WHERE l.p IS NOT NULL AND f.winner IS NOT NULL
             GROUP BY coalesce(s.model,'Laya local') ORDER BY source""")
-        return dict(current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
+        return dict(contract_quotes=rows("SELECT side,ask FROM contract_quotes WHERE start=? AND ts BETWEEN ? AND ?",(focus,time.time()-LIMITS.max_book_age_seconds,time.time())) if focus==current else [], current=current, focus=focus, windows=windows, forecast=next(iter(forecast), None),
                     yahoo=dict(model=next(iter(yahoo_model),None),forecast=next(iter(yahoo_forecast),None),
                                status=next(iter(yahoo_status),None),metrics=yahoo_metrics),
                     evaluation=evaluation.snapshot(db),brain=brain,bet_attempts=attempts,portfolio=portfolio,services=services,teacher=teacher,btc=btc,comparison_by_source=by_source,mode="paper",
