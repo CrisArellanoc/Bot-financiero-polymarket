@@ -50,5 +50,5 @@ def add_context(db, start, x, evidence):
         evidence["casos_similares"] = [dict(start=t,indicadores=dict(zip(FEATURES,features)),ganador=y)
                                         for t,features,y in neighbors]
         ups = sum(y=="Up" for _,_,y in neighbors)
-        evidence["mensajes"].append(dict(ref="E5",hecho=f"De {n} aperturas resueltas, las {NEIGHBORS} más cercanas en indicadores del libro dieron {ups} Up. Considera los casos y su dispersión; es una muestra pequeña."))
+        evidence["mensajes"].append(dict(ref="E5",hecho=f"De {n} aperturas resueltas, las {NEIGHBORS} más cercanas en indicadores del libro terminaron en Up {ups} veces y en Down {NEIGHBORS-ups} veces. Considera los casos y su dispersión; es una muestra pequeña."))
     return version

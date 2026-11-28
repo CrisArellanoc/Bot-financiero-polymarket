@@ -9,7 +9,7 @@ import statistics
 from threading import Lock
 import time
 
-REVISION = "evaluation-v1"
+REVISION = "evaluation-v2"
 _cache = OrderedDict()
 _lock = Lock()
 
@@ -190,6 +190,7 @@ def evaluate(db,now=None):
         observed=evidence.get("inputs_available_at")
         known_inputs=finite(observed) and observed<=record["start"]
         labeled = finite(record["labeled"]) and record["start"]+300<=record["labeled"]<=now and record["winner"] in ("Up","Down")
+        record["official_side"] = record["winner"] if labeled else None
         if not (on_time and known_inputs and labeled and probability(record["p_up"])):
             continue
         features=evidence.get("opening_features") or {}
@@ -218,7 +219,18 @@ def evaluate(db,now=None):
         directional=[r for r in rows if r["on_time"] and r["action"] in ("Up","Down")]
         directional_starts={r["start"] for r in directional}
         statuses={s:sum(r["status"]==s for r in observed) for s in ("pending","filled_paper","rejected","abstained")}
-        return dict(prediction=prediction_scores(scores),trading=trading_scores(trades),
+        by_side = {}
+        for side in ("Up", "Down"):
+            purchases = [trade for trade in trades if trade["outcome"] == side]
+            closed = [Decimal(t["pnl"]) for t in purchases if t["settled_at"] is not None and t["pnl"] is not None]
+            by_side[side] = dict(
+                signals=sum(r["action"] == side for r in directional),
+                official=sum(r["official_side"] == side for r in rows),
+                purchases=len(purchases), settled=len(closed),
+                net=float(sum(closed)) if closed else None,
+                wins=sum(pnl > 0 for pnl in closed), losses=sum(pnl < 0 for pnl in closed),
+            )
+        return dict(by_side=by_side,prediction=prediction_scores(scores),trading=trading_scores(trades),
                     daily=period_scores(scores,"day"),hourly=period_scores(scores,"hour"),regimes=period_scores(scores,"volatility"),
                     coverage=dict(intervals=len(observed),valid_on_time=sum(r["on_time"] for r in rows),
                         signals=len(directional),signal_rate=ratio(len(directional),len(observed)),

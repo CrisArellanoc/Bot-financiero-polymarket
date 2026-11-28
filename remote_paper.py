@@ -13,6 +13,40 @@ import btc_reference
 from remote_brain import PROMPT_VERSION, EXPLORATION_VERSION
 
 
+def twap_changes(history, timestamp, price):
+    """Cambios del TWAP en puntos básicos, anclados a la última muestra de apertura."""
+    history = sorted(history,reverse=True)
+    changes = {}
+    for seconds in (15,60):
+        cutoff = timestamp-seconds
+        previous = next((value for ts,value in history if cutoff-3 <= ts <= cutoff),None)
+        changes[seconds] = round((price/previous-1)*10000,3) if previous and previous>0 else None
+    return changes
+
+
+def opening_twap_changes(db, timestamp, price, as_of):
+    history = db.execute("""SELECT ts,price FROM btc_twap_quotes
+        WHERE ts BETWEEN ? AND ? AND seen<=?""",(timestamp-63,timestamp,as_of))
+    return twap_changes(history,timestamp,price)
+
+
+def opening_messages(start,x,target_price,quote_ts,quote_price,changes):
+    mid_up,spread,imbalance,momentum,_ = x
+    if mid_up == .5:
+        favored = "empate"
+    else:
+        favored = "Up" if mid_up > .5 else "Down"
+    change_text = ", ".join(f"{seconds} s: {value:+.3f} pb" if value is not None
+                            else f"{seconds} s: sin muestra" for seconds,value in changes.items())
+    book = (f"Antes de abrir, mid Up {mid_up:.3f}; complemento implícito Down {1-mid_up:.3f}. "
+            f"Lado favorecido por precio: {favored}. Spread Up {spread:.3f}; cambio del mid Up "
+            f"{momentum:+.3f}; desequilibrio de tamaño (bid-ask)/(bid+ask) del contrato Up {imbalance:+.3f}.")
+    reference = (f"TWAP BTC de apertura {quote_price} USD frente al objetivo {target_price} USD. "
+                 f"Diferencia observada {quote_price-target_price:+.4f} USD, muestra de hace {start-quote_ts:.1f} s.")
+    trend = f"Variaciones del TWAP BTC/USD hasta la última muestra de apertura: {change_text}. 1 pb equivale a 0.01 %."
+    return dict(ref="E0",hecho=book),dict(ref="E1",hecho=reference),dict(ref="E4",hecho=trend)
+
+
 class RemoteAgent(live.Agent):
     def __init__(self,path,brain=None,exploration=False):
         super().__init__(path)
@@ -83,10 +117,11 @@ class RemoteAgent(live.Agent):
                 WHERE ts<=? AND seen<=? ORDER BY ts DESC LIMIT 1""",(start,now)).fetchone()
             if target is None or quote is None or start-quote[0] > 10:
                 raise ValueError("Falta referencia oficial o TWAP reciente de Polymarket a la apertura")
-            history = [dict(start=t,winner=w,p_up=p,model=v,pnl=pnl) for t,w,p,v,pnl in self.db.execute("""
-                SELECT f.start,f.winner,f.p,f.version,o.pnl FROM forecasts f
-                LEFT JOIN orders o ON o.market_id=('btc-updown-5m-'||f.start)
-                WHERE f.labeled<=? AND f.winner IS NOT NULL ORDER BY f.start DESC LIMIT 8""",(start,))]
+            history = [dict(start=t,winner=w) for t,w in self.db.execute("""
+                SELECT start,winner FROM forecasts WHERE start+300<=labeled AND labeled<=?
+                AND winner IN ('Up','Down') ORDER BY start DESC LIMIT 8""",(start,))]
+            changes = opening_twap_changes(self.db,quote[0],quote[2],now)
+            book_msg,reference_msg,trend_msg = opening_messages(start,x,target[1],quote[0],quote[2],changes)
             version = EXPLORATION_VERSION if self.exploration else PROMPT_VERSION
             evidence = dict(mercado=live.slug(start),start=start,end=start+300,as_of=now,modo="exploracion_paper" if self.exploration else "paper",prompt_version=version,
                             opening_features=dict(zip(live.ml.FEATURES,x)),inputs_available_at=available,
@@ -95,13 +130,11 @@ class RemoteAgent(live.Agent):
                             btc_twap=dict(timestamp=quote[0],received=quote[1],price=quote[2]),
                             cartera=dict(capital=str(capital),stake=str(stake),stake_fraction="0.03"),
                             resultados_oficiales_previos=history,
-                            mensajes=[dict(ref="E0",hecho=f"Libro Up antes de abrir: mid {x[0]:.6f}, spread {x[1]:.6f}."),
-                                      dict(ref="E1",hecho=f"TWAP BTC a la apertura {quote[2]}; precio a superar {target[1]}."),
+                            twap_change_bps=changes,
+                            mensajes=[book_msg,reference_msg,
                                       dict(ref="E2",hecho=f"Capital contable {capital} USD; presupuesto incluido costos {stake} USD."),
-                                      dict(ref="E3",hecho=f"Historial disponible: {len(history)} resultados oficiales previos. No modifica los pesos del LLM.")])
-            trend = self.db.execute("SELECT ts,price FROM btc_twap_quotes WHERE ts BETWEEN ? AND ? AND seen<=? ORDER BY ts DESC LIMIT 60",(start-60,start,now)).fetchall()
-            if trend:
-                evidence["mensajes"].append(dict(ref="E4",hecho=f"TWAP BTC antes de abrir, en orden temporal (segundo, USD): {trend[::-1]}"))
+                                      dict(ref="E3",hecho=f"Historial disponible: {len(history)} resultados oficiales previos."),
+                                      trend_msg])
             version = opening_memory.add_context(self.db,start,x,evidence)
             hashed = audit.digest(evidence)
             requested_at=time.time()

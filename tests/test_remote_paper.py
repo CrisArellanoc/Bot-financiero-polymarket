@@ -1,7 +1,7 @@
 import json,tempfile,unittest
 from pathlib import Path
 from unittest.mock import Mock,patch
-from remote_paper import RemoteAgent
+from remote_paper import RemoteAgent, opening_messages, opening_twap_changes
 from live_paper import snapshot
 import paper_audit as audit
 import btc_reference as btc
@@ -37,6 +37,20 @@ class RemotePaperTests(unittest.TestCase):
   self.assertTrue(audit.export(self.path,3000)['receipts_verified'])
   with self.db:self.db.execute("UPDATE orders SET pnl='999' WHERE market_id='btc-updown-5m-3000'")
   self.assertFalse(audit.export(self.path,3000)['receipts_verified'])
+ def test_opening_evidence_respects_direction_time_and_missing_history(self):
+  for price in (59900,60100):
+   with self.db:
+    self.db.execute("DELETE FROM btc_twap_quotes")
+    self.db.executemany("INSERT INTO btc_twap_quotes VALUES(?,?,?,'Polymarket','test')",
+                        [(2920,2920,61000),(2984,2984,60000),(2985,3003,62000),(3000,3000,price)])
+   changes=opening_twap_changes(self.db,3000,price,3001)
+   self.assertEqual(changes[15],round((price/60000-1)*10000,3))
+   self.assertIsNone(changes[60])
+  for mid,side in ((.635,"Up"),(.365,"Down"),(.5,"empate")):
+   book,reference,trend=opening_messages(3000,[mid,.02,0,.0,0],60000,3000,60000,changes)
+   self.assertIn(f"por precio: {side}.",book["hecho"])
+   self.assertIn("observada +0.0000 USD",reference["hecho"])
+   self.assertIn("60 s: sin muestra",trend["hecho"])
  def test_abstention_and_unreachable_api_never_place_order(self):
   for reply in ('abstain','error'):
    with self.subTest(reply=reply):
@@ -161,5 +175,5 @@ class RemotePaperTests(unittest.TestCase):
   self.assertEqual(self.agent.ledger.cash,100)
   record=audit.export(self.path,3000)['decisions'][0]
   self.assertEqual(record['evidence']['price_to_beat']['price'],60000)
-  self.assertTrue(record['prompt_version'].startswith('llm-paper-v2:'))
+  self.assertTrue(record['prompt_version'].startswith('llm-paper-v3:'))
   self.assertEqual(record['completed_at']-record['requested_at'],0)

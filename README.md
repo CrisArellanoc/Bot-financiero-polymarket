@@ -42,6 +42,12 @@ Conéctate a la red del profesor o a una VPN autorizada. El cliente verifica TLS
 
 La simulación es experimental. Usar un LLM como cerebro no demuestra ventaja predictiva ni rentabilidad. No hay órdenes reales ni conexión autenticada de trading. La API de Polymarket se usa para lectura pública.
 
+### Lectura de las señales Up y Down
+
+La evidencia de apertura presenta el precio medio del contrato Up y su complemento implícito Down, el impulso del contrato y la variación del TWAP de BTC a 15 y 60 segundos. Cada variación lleva signo. Si falta la muestra necesaria, figura como ausente. La coincidencia entre el TWAP de apertura y el precio a superar es neutral para el pronóstico de cierre. El historial enviado al modelo contiene los desenlaces oficiales disponibles en ese momento. Una nueva versión del prompt identifica este cambio en la auditoría.
+
+En **Evaluación prospectiva del LLM**, elige la versión de apertura y consulta **Señales, compras y resultados por lado**. Puedes comparar cuántas señales emitió, cuántas compras se ejecutaron, qué lado ganó y el resultado financiero por lado. El acierto balanceado pondera Up y Down por igual cuando ambas clases tienen observaciones. La evaluación prospectiva y el resultado neto permiten valorar la nueva política a medida que se resuelven intervalos.
+
 ## Apuesta del 3% o mínimo válido del mercado
 
 Capital contable = efectivo disponible + costo de posiciones pendientes. Equivale al capital inicial más resultados realizados; no incluye revalorización de posiciones abiertas. La cuenta nueva comienza con 100 USD virtuales. Una cuenta existente nunca se reinicia al actualizar.

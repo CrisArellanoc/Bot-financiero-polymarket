@@ -897,6 +897,14 @@
               <small>Cobertura de señales</small><strong id="evalCoverage">—</strong>
             </div>
           </div>
+          <div>
+            <h3>Señales, compras y resultados por lado</h3>
+            <table class="eval-table">
+              <thead><tr><th>Medida</th><th>Up</th><th>Down</th></tr></thead>
+              <tbody id="evalSides"></tbody>
+            </table>
+            <p id="evalSideCoverage" class="section-note"></p>
+          </div>
           <div class="eval-grid">
             <div>
               <h3>Calibración de las puntuaciones</h3>
@@ -2263,6 +2271,36 @@
         set("evalMean", t.mean_net == null ? "—" : money(t.mean_net))
         set("evalCoverage", pct(c.signal_rate))
         set("evalDrawdown", port.settled ? pct(port.max_drawdown_pct) : "—")
+        const sides = group.by_side
+        if (sides) {
+          const sideRows = [
+            ["Señales válidas a tiempo", (s) => s.signals],
+            ["Resultados oficiales en intervalos consultados", (s) => s.official],
+            ["Compras ejecutadas", (s) => s.purchases],
+            ["Compras cerradas / pendientes", (s) => s.settled + " / " + (s.purchases - s.settled)],
+            ["Ganadoras / perdedoras / neutras", (s) => s.wins + " / " + s.losses + " / " + (s.settled - s.wins - s.losses)],
+            ["Resultado neto realizado", (s) => s.net == null ? "—" : money(s.net)],
+          ]
+          const m = p.confusion
+          const sideRate = (hits, total) => total ? pct(hits / total) + " (" + hits + "/" + total + ")" : "— (0/0)"
+          const rows = sideRows.map(([label, value]) => [label, String(value(sides.Up)), String(value(sides.Down))])
+          rows.push(["Aciertos / señales evaluadas de ese lado",
+            sideRate(m.actual_up_pred_up, m.actual_up_pred_up + m.actual_down_pred_up),
+            sideRate(m.actual_down_pred_down, m.actual_down_pred_down + m.actual_up_pred_down)])
+          rows.push(["Aciertos / resultados de ese lado con señal evaluada",
+            sideRate(m.actual_up_pred_up, m.actual_up_pred_up + m.actual_up_pred_down),
+            sideRate(m.actual_down_pred_down, m.actual_down_pred_down + m.actual_down_pred_up)])
+          evalRows("evalSides", rows)
+          const notes = []
+          for (const side of ["Up", "Down"]) {
+            if (!sides[side].signals) notes.push("Sin señales " + side)
+            else if (!sides[side].purchases) notes.push("Señales " + side + " sin compras")
+          }
+          set("evalSideCoverage", notes.join(" · "))
+        } else {
+          evalRows("evalSides", [])
+          set("evalSideCoverage", "Esperando desglose por lado.")
+        }
         drawCalibration(p.calibration)
         drawEquity(port)
         evalRows("evalPrediction", [

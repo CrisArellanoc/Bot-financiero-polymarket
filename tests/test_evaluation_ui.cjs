@@ -12,3 +12,15 @@ const ci={low:null,high:null,blocks:1}
 function data(){const group={prediction:{n:4,brier:.125,brier_common:.125,market_brier:.25,brier_skill:.5,classification_n:4,market_n:4,accuracy:.75,calibration:[{n:2,predicted:.8,observed:1,lower:.8,upper:.9}],confusion:{actual_up_pred_up:2,actual_up_pred_down:0,actual_down_pred_up:1,actual_down_pred_down:1},improvement_ci:ci},trading:{settled:2,mean_net:.5,net:1,profit_factor:2,profit_factor_status:'measured',wins:1,losses:1,max_losing_streak:1,mean_net_ci:ci},coverage:{intervals:8,signals:4,signal_rate:.5,abstentions:2,api_failures:1,late_responses:1,risk_rejections:2,statuses:{pending:0}},api:{requests:7,completed:7,valid:6,valid_rate:6/7,on_time_rate:5/7,median_seconds:2,p95_seconds:19,timing_unknown:0},daily:[],hourly:[],regimes:[],mean_estimated_net:.7};return{overall:group,groups:[{...group,key:'Qwen|v1',model:'Qwen',prompt_version:'v1'}],portfolio:{settled:2,max_drawdown_pct:.03,max_drawdown_usd:3,curve:[{capital:100},{capital:97}]}}}
 test('El panel muestra métricas de la selección y permite separar la versión',()=>{const f=fixture(),s=data();f.render(s);assert.equal(f.el('evalSkill').textContent,'50.0%');assert.match(f.el('evaluationScope').textContent,/4 puntuaciones/);assert.equal(f.el('evalCalibration').children.filter(n=>n.attrs.cx).length,1);f.el('evaluationVersion').value='Qwen|v1';f.el('evaluationVersion').listeners.change();assert.match(f.el('evaluationScope').textContent,/Versión seleccionada/);assert.match(f.flat(f.el('evalOperation')),/19.000 s/);assert.match(f.el('evalUncertainty').textContent,/sin intervalo/);})
 test('Sin resultados no presenta ceros como éxito ni infinito como profit factor',()=>{const f=fixture(),s=data();s.overall.prediction={...s.overall.prediction,n:0,brier:null,brier_common:null,market_brier:null,brier_skill:null,classification_n:0,accuracy:null,calibration:[]};s.overall.trading={...s.overall.trading,settled:0,mean_net:null,profit_factor:null,profit_factor_status:'no_results'};s.portfolio.settled=0;f.render(s);assert.equal(f.el('evalSkill').textContent,'—');assert.equal(f.el('evalMean').textContent,'—');assert.match(f.flat(f.el('evalEquity')),/Esperando/);assert.match(f.flat(f.el('evalOperation')),/Sin resultados/);assert.ok(!f.flat(f.el('evalOperation')).includes('Infinity'));})
+
+test('Identifica las compras concentradas en un lado y conserva cocientes sin muestra',()=>{
+ const f=fixture(),s=data()
+ s.overall.by_side={Up:{signals:2,official:2,purchases:0,settled:0,wins:0,losses:0,net:null},
+   Down:{signals:3,official:3,purchases:2,settled:1,wins:0,losses:1,net:-2.53}}
+ s.overall.prediction.confusion={actual_up_pred_up:0,actual_up_pred_down:1,actual_down_pred_up:0,actual_down_pred_down:2}
+ f.render(s)
+ assert.match(f.el('evalSideCoverage').textContent,/Señales Up sin compras/)
+ assert.match(f.flat(f.el('evalSides')),/66.7% \(2\/3\)/)
+ assert.match(f.flat(f.el('evalSides')),/— \(0\/0\)/)
+ assert.match(f.flat(f.el('evalSides')),/-2.53 USD/)
+})

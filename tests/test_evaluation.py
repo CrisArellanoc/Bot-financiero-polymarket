@@ -40,6 +40,19 @@ class EvaluationTests(unittest.TestCase):
   self.assertEqual(o['api']['valid'],6);self.assertEqual(o['api']['completed'],7)
   self.assertEqual(o['api']['median_seconds'],2);self.assertEqual(o['api']['p95_seconds'],19)
   self.assertEqual(o['coverage']['api_failures'],1);self.assertEqual(o['coverage']['late_responses'],1)
+ def test_side_breakdown_separates_signals_from_pending_and_realized_purchases(self):
+  starts=[self.add(i,p,y) for i,(p,y) in enumerate(((.1,'Up'),(.2,'Down'),(.7,'Up')))]
+  self.add(3,.2,'Up',delay=19)
+  self.add(4,None,'Down',action='abstain')
+  self.add(5,.2,None)
+  with self.db:
+   self.db.executemany("INSERT INTO orders VALUES(?,?,?,?,?,?,?,?)",[
+    (f"btc-updown-5m-{starts[0]}","Down","5","3",starts[0]+300,starts[0]+310,"0","-3"),
+    (f"btc-updown-5m-{starts[1]}","Down","5","3",starts[1]+300,None,None,None)])
+  group=ev.evaluate(self.db)['overall'];sides=group['by_side']
+  self.assertEqual(sides['Down'],dict(signals=3,official=2,purchases=2,settled=1,net=-3,wins=0,losses=1))
+  self.assertEqual(sides['Up'],dict(signals=1,official=3,purchases=0,settled=0,net=None,wins=0,losses=0))
+  self.assertEqual(group['prediction']['precision_down'],.5)
  def test_prior_reference_never_uses_future_labels_and_missing_times_are_unknown(self):
   start=self.add(0,.8,'Up')
   with self.db:
