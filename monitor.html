@@ -881,7 +881,7 @@
               </select></label
             >
           </div>
-          <p class="muted">Puedes comparar memoria-v1 y control-v1 del mismo modelo y modo en el selector. Revisa aperturas resueltas, porcentaje de aciertos, Brier y cobertura de señales. La memoria incorpora cinco casos similares al contexto del chat.</p>
+          <p class="muted">En exploración, compara probabilidad-v1 y exploracion-v2 con la marca comparacion-v1 y el mismo sufijo de memoria. Revisa aperturas resueltas, acierto, Brier y cobertura. La variante memoria-v1 añade cinco casos anteriores.</p>
           <p id="evaluationScope" class="muted"></p>
           <div class="metrics">
             <div class="metric">
@@ -2318,6 +2318,8 @@
             pct(p.market_accuracy) + ` · N ${p.action_market_n}`,
           ],
           ["Acierto referencia histórica previa", pct(p.prior_accuracy)],
+          ["Acierto si siempre se eligiera Up / Down", pct(p.always_up_accuracy) + " / " + pct(p.always_down_accuracy) + " · N " + p.classification_n],
+          ["Brier con probabilidad fija del 50 %", p.n ? "0.250 · N " + p.n : "—"],
           ["Acierto balanceado", pct(p.balanced_accuracy)],
           ["Precisión Up / Down", pct(p.precision_up) + " / " + pct(p.precision_down)],
           ["Sensibilidad Up / Down", pct(p.recall_up) + " / " + pct(p.recall_down)],

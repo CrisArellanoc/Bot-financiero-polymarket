@@ -304,6 +304,8 @@ class Agent:
     def resolve(self, now):
         # Reintentos rotativos para que un mercado atrasado no bloquee los siguientes.
         pending = self.db.execute("""SELECT start FROM forecasts WHERE (EXISTS(SELECT 1 FROM orders o WHERE o.market_id=('btc-updown-5m-'||forecasts.start) AND o.settled_at IS NULL) OR p IS NOT NULL OR EXISTS(
+            SELECT 1 FROM brain_decisions b WHERE b.start=forecasts.start AND b.action='abstain'
+                AND (b.response_valid=1 OR (b.response_valid IS NULL AND b.status='ok'))) OR EXISTS(
             SELECT 1 FROM yahoo_predictions y WHERE y.start=forecasts.start AND y.p IS NOT NULL)) AND winner IS NULL
             AND start+300<=? AND checked<=? ORDER BY EXISTS(SELECT 1 FROM orders o WHERE o.market_id=('btc-updown-5m-'||forecasts.start) AND o.settled_at IS NULL) DESC,checked,start LIMIT 3""", (now, now-20)).fetchall()
         for (start,) in pending:

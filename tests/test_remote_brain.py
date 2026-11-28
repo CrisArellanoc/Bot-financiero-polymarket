@@ -49,6 +49,20 @@ class RemoteBrainTests(unittest.TestCase):
             api.return_value={**decision,"action":"abstain"}
             with self.assertRaises(remote.RemoteModelError):client.decide(evidence)
 
+    def test_probability_first_compares_two_pairs_and_validates_outputs(self):
+        self.assertCountEqual([brain.exploration_version(t) for t in range(3600,4800,300)],
+                              [brain.PROBABILITY_VERSION]*2+[brain.EXPLORATION_VERSION]*2)
+        client=brain.RemoteBrain.from_env(self.settings)
+        evidence={**self.evidence,"modo":"exploracion_paper","forecast_method":"probability_first"}
+        for p,action in ((.49,"Down"),(.50,"Up"),(.51,"Up")):
+            reply=dict(p_up=p,reason="E0",refs=["E0"])
+            with patch.object(remote._Endpoint,"chat",return_value=reply) as api:
+                self.assertEqual(client.decide(evidence)["action"],action)
+                self.assertNotIn("action",api.call_args.args[2]["properties"])
+                for bad in ({**reply,"p_up":True},{**reply,"p_up":float("nan")},{**reply,"action":"Up"}):
+                    api.return_value=bad
+                    with self.assertRaises(remote.RemoteModelError): client.decide(evidence)
+
     def test_rejects_malformed_unobserved_and_inconsistent_decisions(self):
         for change in ({"action":"BUY"},{"action":"Down"},{"p_up":True},{"p_up":".6"},
                        {"p_up":float("nan")},{"p_up":None},{"p_up":.5},{"p_up":1.1},

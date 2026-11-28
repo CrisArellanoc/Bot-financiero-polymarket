@@ -88,6 +88,7 @@ def prediction_scores(scored):
         brier_skill=1-common/market if market is not None and market>0 else None,
         prior_brier=brier(scored,"prior"),calibration=bins,ece=ece,
         classification_n=len(actions),accuracy=ratio(tp+tn,len(actions)),
+        always_up_accuracy=ratio(tp+fn,len(actions)),always_down_accuracy=ratio(tn+fp,len(actions)),
         balanced_accuracy=(recall_up+recall_down)/2 if recall_up is not None and recall_down is not None else None,
         precision_up=ratio(tp,tp+fp),recall_up=recall_up,precision_down=ratio(tn,tn+fn),recall_down=recall_down,
         f1_up=ratio(2*tp,2*tp+fp+fn),f1_down=ratio(2*tn,2*tn+fp+fn),

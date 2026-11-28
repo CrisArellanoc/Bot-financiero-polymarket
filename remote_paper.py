@@ -10,7 +10,7 @@ from autonomy import number
 import opening_memory
 import service_status
 import btc_reference
-from remote_brain import PROMPT_VERSION, EXPLORATION_VERSION
+from remote_brain import PROMPT_VERSION, exploration_version, PROBABILITY_VERSION
 
 
 def twap_changes(history, timestamp, price):
@@ -122,7 +122,7 @@ class RemoteAgent(live.Agent):
                 AND winner IN ('Up','Down') ORDER BY start DESC LIMIT 8""",(start,))]
             changes = opening_twap_changes(self.db,quote[0],quote[2],now)
             book_msg,reference_msg,trend_msg = opening_messages(start,x,target[1],quote[0],quote[2],changes)
-            version = EXPLORATION_VERSION if self.exploration else PROMPT_VERSION
+            version = exploration_version(start) if self.exploration else PROMPT_VERSION
             evidence = dict(mercado=live.slug(start),start=start,end=start+300,as_of=now,modo="exploracion_paper" if self.exploration else "paper",prompt_version=version,
                             opening_features=dict(zip(live.ml.FEATURES,x)),inputs_available_at=available,
                             price_to_beat=dict(price=target[1],received=target[0],source=target[2],reference_ts=start,
@@ -135,6 +135,10 @@ class RemoteAgent(live.Agent):
                                       dict(ref="E2",hecho=f"Capital contable {capital} USD; presupuesto incluido costos {stake} USD."),
                                       dict(ref="E3",hecho=f"Historial disponible: {len(history)} resultados oficiales previos."),
                                       trend_msg])
+            if version == PROBABILITY_VERSION:
+                evidence["forecast_method"] = "probability_first"
+            if self.exploration:
+                evidence["prompt_version"] += "/comparacion-v1"
             version = opening_memory.add_context(self.db,start,x,evidence)
             hashed = audit.digest(evidence)
             requested_at=time.time()

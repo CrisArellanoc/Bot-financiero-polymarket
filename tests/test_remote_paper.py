@@ -61,6 +61,15 @@ class RemotePaperTests(unittest.TestCase):
     self.assertEqual(self.db.execute('SELECT count(*) FROM orders').fetchone()[0],0)
     with self.db:
      for table in ('bet_attempts','brain_decisions','forecasts','audit_events'):self.db.execute('DELETE FROM '+table)
+ def test_abstention_without_probability_can_learn_its_official_outcome(self):
+  self.brain.decide.return_value=dict(action="abstain",p_up=None,reason="Sin señal",refs=["E0"])
+  self.decide()
+  with patch("live_paper.time.time",return_value=3400),patch("live_paper.market_for",return_value=({},None,None)),patch("live_paper.normalize_resolved",return_value={"outcome":"Up"}):
+   self.agent.resolve(3400)
+  self.assertEqual(self.db.execute("SELECT p,winner,labeled FROM forecasts").fetchone(),(None,"Up",3400))
+  self.assertEqual(self.agent.ledger.cash,100)
+  self.assertEqual(snapshot(self.path)["evaluation"]["overall"]["prediction"]["classification_n"],0)
+
  def test_early_sale_once_and_official_resolution(self):
   self.decide()
   self.brain.decide.return_value=dict(action="Down",p_up=.2,reason="Cambio de tendencia",refs=["E0"])
