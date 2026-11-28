@@ -1086,6 +1086,10 @@
           this.focus = null
           this.forecast = null
           this.frame = null
+          this.displayedTime = null
+          this.displayedRange = null
+          this.gap = usd ? 8 : 18
+          this.moneyAxis = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
           this.motion = window.matchMedia("(prefers-reduced-motion: reduce)")
           this.svg.replaceChildren()
           const gradient = this.add("linearGradient", {
@@ -1108,16 +1112,25 @@
             }),
           )
           this.axes = this.add("g", {})
-          this.area = this.add("path", {
+          const clipId = usd ? "btc-trace-clip" : "market-trace-clip"
+          const clip = this.add("clipPath", { id: clipId })
+          this.reveal = this.element("rect", {})
+          clip.append(this.reveal)
+          const clipped = this.add("g", { "clip-path": `url(#${clipId})` })
+          this.trace = this.element("g", {})
+          clipped.append(this.trace)
+          this.area = this.element("path", {
             fill: usd ? "url(#btc-fill)" : "url(#market-fill)",
           })
-          this.line = this.add("path", {
+          this.line = this.element("path", {
             fill: "none",
             stroke: "#ffa513",
             "stroke-width": "2.5",
+            "vector-effect": "non-scaling-stroke",
             "stroke-linecap": "round",
             "stroke-linejoin": "round",
           })
+          this.trace.append(this.area, this.line)
           this.prediction = this.add("path", {
             fill: "none",
             stroke: "#94b9ff",
@@ -1155,6 +1168,12 @@
           this.dot = this.add("circle", { r: "4", fill: "#ffa513" })
           this.resize = new ResizeObserver(() => this.draw())
           this.resize.observe(svg)
+          this.motion.addEventListener?.("change", () => {
+            if (this.motion.matches) {
+              this.cancel()
+              this.draw()
+            }
+          })
           document.addEventListener("visibilitychange", () => {
             if (document.hidden) {
               this.cancel()
@@ -1197,48 +1216,76 @@
           }
           const previous = this.rows.at(-1)
           const latest = state.prices.at(-1)
-          const animate =
-            previous &&
-            latest &&
-            this.focus === state.focus &&
-            latest.seen > previous.seen &&
-            latest.seen - previous.seen <= (this.usd ? 8 : 18) &&
-            state.prices.filter((row) => row.seen > previous.seen).length === 1 &&
-            state.focus === state.current &&
-            !document.hidden &&
-            !this.motion.matches
-          this.cancel()
+          const previousIndex = previous ? state.prices.findIndex((row) => row.seen === previous.seen) : -1
+          const continuous = previousIndex >= 0 && state.prices.slice(previousIndex + 1).every(
+            (row, index) => row.seen - state.prices[previousIndex + index].seen <= this.gap,
+          )
+          const live = state.focus === state.current && !document.hidden && !this.motion.matches
+          const sameWindow = this.focus === state.focus
+          const animate = live && sameWindow && continuous && latest.seen > previous.seen
+          const keepAnimating = live && sameWindow && continuous && previous.seen === latest.seen &&
+            this.frame !== null
+          const fromTime = this.displayedTime ?? previous?.seen
+          const fromRange = this.displayedRange
+          if (!keepAnimating) this.cancel()
           this.focus = state.focus
           this.rows = state.prices
           this.forecast = state.laya
           this.prediction.setAttribute("stroke", this.usd ? "#d4a3ff" : "#94b9ff")
           this.yahooForecast = state.yahoo?.forecast
-          if (!animate) {
-            this.draw()
-            return
-          }
+          this.draw()
+          if (!animate) return
+
           const started = performance.now()
-          let lastFrame = -Infinity
+          const ease = (t) => (1 - Math.cos(Math.PI * t)) / 2
           const tick = (now) => {
-            const progress = Math.min(1, (now - started) / 700)
-            if (now - lastFrame >= 1000 / 30 || progress === 1) {
-              lastFrame = now
-              const eased = progress * progress * (3 - 2 * progress)
-              // Solo se anima el tramo nuevo. El historial ya recibido queda fijo.
-              const point = {
-                seen: previous.seen + (latest.seen - previous.seen) * eased,
-                price: previous.price + (latest.price - previous.price) * eased,
-              }
-              this.draw(point, previous.seen)
+            const elapsed = Math.max(0, now - started)
+            const progress = Math.min(1, elapsed / 1550)
+            const blend = ease(Math.min(1, elapsed / 1200))
+            if (progress === 1) {
+              this.paint(latest.seen, this.range)
+              this.frame = null
+              return
             }
-            this.frame = progress < 1 ? requestAnimationFrame(tick) : null
+            const { lo, hi } = this.range
+            this.paint(fromTime + (latest.seen - fromTime) * ease(progress), {
+              lo: fromRange.lo + (lo - fromRange.lo) * blend,
+              hi: fromRange.hi + (hi - fromRange.hi) * blend,
+            })
+            this.frame = requestAnimationFrame(tick)
           }
-          this.draw(previous, previous.seen)
+          this.paint(fromTime, fromRange)
           this.frame = requestAnimationFrame(tick)
         }
 
-        draw(animated = null, cutoff = null) {
+        controls() {
+          const slopes = this.rows.map((row, index) => {
+            const previous = this.rows[index - 1]
+            const next = this.rows[index + 1]
+            if (!previous || !next || row.seen - previous.seen > this.gap ||
+                next.seen - row.seen > this.gap) return 0
+            const leftWidth = row.seen - previous.seen
+            const rightWidth = next.seen - row.seen
+            const leftSlope = (row.price - previous.price) / leftWidth
+            const rightSlope = (next.price - row.price) / rightWidth
+            if (leftSlope * rightSlope <= 0) return 0
+            // Media armónica ponderada para mantener la curva monótona entre datos.
+            const leftWeight = 2 * rightWidth + leftWidth
+            const rightWeight = rightWidth + 2 * leftWidth
+            return (leftWeight + rightWeight) / (leftWeight / leftSlope + rightWeight / rightSlope)
+          })
+          return this.rows.map((row, index) => {
+            const previous = this.rows[index - 1]
+            if (!previous || row.seen - previous.seen > this.gap) return null
+            const third = (row.seen - previous.seen) / 3
+            return [previous.price + slopes[index - 1] * third, row.price - slopes[index] * third]
+          })
+        }
+
+        draw() {
           if (this.focus == null) return
+          const displayedTime = this.displayedTime
+          const displayedRange = this.displayedRange
           const width = Math.max(280, this.svg.getBoundingClientRect().width || 640)
           const height = 280,
             left = 10,
@@ -1246,118 +1293,126 @@
             top = 18,
             bottom = height - 39
           const x = (t) => left + ((right - left) * (t - this.focus)) / 300
-          const values = this.rows.map((r) => r.price)
+          this.layout = { x, left, right, top, bottom }
+          const values = this.rows.map((row) => row.price)
           if (this.reference?.price != null) values.push(this.reference.price)
           if (this.forecast?.p != null) values.push(this.forecast.p)
-          let lo = 0,
-            hi = 1
+          let lo = 0, hi = 1
           if (this.usd && values.length) {
-            const low = Math.min(...values),
-              high = Math.max(...values)
+            const low = Math.min(...values), high = Math.max(...values)
             const pad = Math.max(3, (high - low) * 0.18)
             lo = low - pad
             hi = high + pad
           }
+          this.range = { lo, hi }
           const y = (price) => bottom - (bottom - top) * ((price - lo) / (hi - lo))
-          const time = (t) =>
-            new Date(t * 1000).toLocaleTimeString("es-MX", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })
-          if (this.axesKey !== `${width}/${this.focus}/${lo}/${hi}`) {
-            this.axesKey = `${width}/${this.focus}/${lo}/${hi}`
+          if (this.axesKey !== `${width}/${this.focus}`) {
+            this.axesKey = `${width}/${this.focus}`
             this.svg.setAttribute("viewBox", `0 0 ${width} ${height}`)
             this.axes.replaceChildren()
-            for (const value of [0, 0.25, 0.5, 0.75, 1].map((v) => lo + (hi - lo) * v)) {
-              const attrs = {
-                x1: left,
-                x2: right,
-                y1: y(value),
-                y2: y(value),
-                stroke: "#35464f",
-                "stroke-opacity": ".55",
-              }
-              if (value === 0.5) attrs["stroke-dasharray"] = "4 5"
-              this.axes.append(
-                this.element("line", attrs),
-                this.element(
-                  "text",
-                  {
-                    x: right + 8,
-                    y: y(value) + 5,
-                    fill: "#afbec4",
-                    "font-size": 14,
-                  },
-                  this.usd
-                    ? "$" +
-                        value.toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })
-                    : Math.round(value * 100) + "%",
-                ),
-              )
-            }
+            this.axisLabels = [0, .25, .5, .75, 1].map((fraction) => {
+              const lineY = bottom - (bottom - top) * fraction
+              this.axes.append(this.element("line", {
+                x1: left, x2: right, y1: lineY, y2: lineY, stroke: "#35464f", "stroke-opacity": ".55",
+                ...(!this.usd && fraction === .5 ? { "stroke-dasharray": "4 5" } : {}),
+              }))
+              const label = this.element("text", {
+                x: right + 8, y: lineY + 5, fill: "#afbec4", "font-size": 14,
+              })
+              this.axes.append(label)
+              return label
+            })
             for (const offset of [0, 150, 300]) {
-              this.axes.append(
-                this.element(
-                  "text",
-                  {
-                    x: x(this.focus + offset),
-                    y: height - 9,
-                    fill: "#afbec4",
-                    "font-size": 14,
-                    "text-anchor": offset === 0 ? "start" : offset === 300 ? "end" : "middle",
-                  },
-                  time(this.focus + offset),
-                ),
-              )
+              const t = this.focus + offset
+              this.axes.append(this.element("text", {
+                x: x(t), y: height - 9, fill: "#afbec4", "font-size": 14,
+                "text-anchor": offset === 0 ? "start" : offset === 300 ? "end" : "middle",
+              }, new Date(t * 1000).toLocaleTimeString("es-MX", {
+                hour: "2-digit", minute: "2-digit", hour12: false,
+              })))
             }
           }
-          const rows = animated
-            ? this.rows.filter((row) => row.seen <= cutoff).concat(animated)
-            : this.rows
-          let path = "",
-            area = "",
-            segment = "",
-            first = null,
-            previous = null
+
+          this.curves = this.controls()
+          let path = "", area = "", segment = "", first = null, previous = null
+          // El recorte mantiene la base del área fija mientras se ajusta la escala.
+          const floor = bottom + 2 * (bottom - top)
           const closeArea = () => {
             if (previous)
-              area += segment + ` L ${x(previous.seen)} ${bottom} L ${x(first.seen)} ${bottom} Z `
+              area += segment + ` L ${x(previous.seen)} ${floor} L ${x(first.seen)} ${floor} Z `
           }
-          for (const row of rows) {
-            if (!previous || row.seen - previous.seen > (this.usd ? 8 : 18)) {
+          this.rows.forEach((row, index) => {
+            const controls = this.curves[index]
+            if (!controls) {
               closeArea()
               first = row
               segment = `M ${x(row.seen)} ${y(row.price)}`
-              path += ` M ${x(row.seen)} ${y(row.price)}`
+              path += " " + segment
             } else {
-              const middle = (x(previous.seen) + x(row.seen)) / 2
-              // Estos controles mantienen la curva dentro del rango de sus dos cotizaciones.
-              const curve = ` C ${middle} ${y(previous.price)}, ${middle} ${y(row.price)}, ${x(row.seen)} ${y(row.price)}`
+              const from = x(previous.seen), to = x(row.seen), third = (to - from) / 3
+              const curve = ` C ${from + third} ${y(controls[0])}, ${to - third} ${y(controls[1])}, ${to} ${y(row.price)}`
               segment += curve
               path += curve
             }
             previous = row
-          }
+          })
           closeArea()
           this.line.setAttribute("d", path)
           this.area.setAttribute("d", area)
-          const last = rows.at(-1)
+          this.reveal.setAttribute("x", left - 2)
+          this.reveal.setAttribute("y", 0)
+          this.reveal.setAttribute("height", bottom + 1)
+          const latest = this.rows.at(-1)
+          if (this.frame !== null && displayedTime != null)
+            this.paint(displayedTime, displayedRange)
+          else
+            this.paint(latest?.seen ?? null, this.range)
+        }
+
+        paint(headTime, range) {
+          const { x, left, right, top, bottom } = this.layout
+          const { lo, hi } = range
+          this.displayedTime = headTime
+          this.displayedRange = range
+          const y = (price) => bottom - (bottom - top) * ((price - lo) / (hi - lo))
+          const scale = (this.range.hi - this.range.lo) / (hi - lo)
+          const offset = bottom * (1 - scale) + (bottom - top) * (lo - this.range.lo) / (hi - lo)
+          this.trace.setAttribute("transform", `matrix(1 0 0 ${scale} 0 ${offset})`)
+          this.reveal.setAttribute("width", headTime == null ? 0 : x(headTime) - left + 2)
+          this.axisLabels.forEach((label, index) => {
+            const value = lo + (hi - lo) * index / 4
+            // Evita reescribir etiquetas en fotogramas con el mismo valor visible.
+            const formatted = this.usd ? this.moneyAxis.format(value) : Math.round(value * 100) + "%"
+            if (label.textContent !== formatted) label.textContent = formatted
+          })
+
+          const latest = this.rows.at(-1)
           for (const node of [this.dot, this.halo, this.guide])
-            node.style.display = last ? "" : "none"
-          if (last) {
-            for (const node of [this.dot, this.halo]) {
-              node.setAttribute("cx", x(last.seen))
-              node.setAttribute("cy", y(last.price))
+            node.style.display = latest ? "" : "none"
+          if (latest) {
+            let price = latest.price
+            if (headTime < latest.seen) {
+              const index = this.rows.findIndex((row) => row.seen >= headTime)
+              const row = this.rows[index], previous = this.rows[index - 1]
+              const controls = this.curves[index]
+              price = row.price
+              if (controls && headTime < row.seen) {
+                const t = (headTime - previous.seen) / (row.seen - previous.seen)
+                const u = 1 - t
+                price = u ** 3 * previous.price + 3 * u ** 2 * t * controls[0] +
+                  3 * u * t ** 2 * controls[1] + t ** 3 * row.price
+              }
             }
-            this.guide.setAttribute("x1", x(last.seen))
+            const headX = x(headTime), headY = y(price)
+            for (const node of [this.dot, this.halo]) {
+              node.setAttribute("cx", headX)
+              node.setAttribute("cy", headY)
+            }
+            this.guide.setAttribute("x1", headX)
             this.guide.setAttribute("x2", right)
-            this.guide.setAttribute("y1", y(last.price))
-            this.guide.setAttribute("y2", y(last.price))
-            const stale = Date.now() / 1000 - this.rows.at(-1).seen > (this.usd ? 10 : 18)
+            this.guide.setAttribute("y1", headY)
+            this.guide.setAttribute("y2", headY)
+            const stale = Date.now() / 1000 - latest.seen > (this.usd ? 10 : 18)
             this.halo.style.display = stale ? "none" : ""
           }
           const target = this.usd ? this.reference?.price : null

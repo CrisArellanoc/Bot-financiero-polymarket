@@ -81,10 +81,10 @@ test("La transición termina en la cotización exacta y conserva los nodos SVG",
   const node=f.chart.line
   f.chart.update(state([{seen:3002,price:.4},{seen:3004,price:.8}]))
   assert.equal(f.frames.size,1)
-  f.step(350)
+  f.step(775)
   assert.ok(Number(f.chart.dot.attributes.cy)<bottom(.4))
   assert.ok(Number(f.chart.dot.attributes.cy)>bottom(.8))
-  f.step(700)
+  f.step(1550)
   assert.equal(f.chart.line,node)
   assert.equal(Number(f.chart.dot.attributes.cy),bottom(.8))
   assert.equal(f.frames.size,0)
@@ -100,18 +100,53 @@ test("El cambio de intervalo cancela la transición anterior",()=>{
   assert.equal((f.chart.line.attributes.d.match(/M /g)||[]).length,1)
 })
 
-test("Movimiento reducido, pestaña oculta y múltiples muestras evitan la animación",()=>{
-  for(const mode of ["reduced","hidden","batch"]){
+test("Movimiento reducido, pestaña oculta y huecos evitan la animación",()=>{
+  for(const mode of ["reduced","hidden","gap"]){
     const f=chartFixture(mode==="reduced")
     f.chart.update(state([{seen:3002,price:.4}]))
     if(mode==="hidden") f.document.hidden=true
     const rows=[{seen:3002,price:.4},{seen:3004,price:.8}]
-    if(mode==="batch") rows.push({seen:3006,price:.6})
+    if(mode==="gap") rows.push({seen:3030,price:.6})
     f.chart.update(state(rows))
     assert.equal(f.frames.size,0)
   }
 })
 
+
+test("El trazo avanza por un lote de cotizaciones y conserva cada valor real",()=>{
+  const f=chartFixture(false,true)
+  const state = (prices) => ({focus:3000,current:3000,btc:{
+    target:{price:60000},quotes:prices.map(([ts,price])=>({ts,price}))}})
+  f.chart.update(state([[3002,60000]]))
+  const previousY = Number(f.chart.dot.attributes.cy)
+  const updated=state([[3002,60000],[3003,60010],[3004,60020]])
+  f.chart.update(updated)
+  const d=f.chart.line.attributes.d
+  assert.equal(f.frames.size,1)
+  assert.equal(f.chart.displayedTime,3002)
+  assert.equal(Number(f.chart.dot.attributes.cy),previousY)
+  f.step(775)
+  assert.ok(Math.abs(f.chart.displayedTime - 3003)<1e-9)
+  assert.equal(f.chart.line.attributes.d,d)
+  assert.ok(f.chart.displayedRange.hi>60003 && f.chart.displayedRange.hi<f.chart.range.hi)
+  f.chart.update(updated)
+  assert.equal(f.frames.size,1)
+  assert.ok(Math.abs(f.chart.displayedTime - 3003)<1e-9)
+  f.step(1550)
+  assert.equal(f.frames.size,0)
+  assert.equal(f.chart.displayedTime,3004)
+  assert.deepEqual(f.chart.displayedRange,f.chart.range)
+  const endY=Number(d.split(",").at(-1).trim().split(" ").at(-1))
+  assert.equal(Number(f.chart.dot.attributes.cy),endY)
+})
+
+test("Los tramos crecientes enlazan con la misma pendiente al pasar por la muestra",()=>{
+  const {chart}=chartFixture(true)
+  chart.update(state([{seen:3002,price:.4},{seen:3004,price:.7},{seen:3008,price:.8}]))
+  const leftSlope=(.7-chart.curves[1][1])*3/2
+  const rightSlope=(chart.curves[2][0]-.7)*3/4
+  assert.ok(leftSlope>0 && Math.abs(leftSlope-rightSlope)<1e-9)
+})
 
 test("BTC usa dólares, referencia exacta y predicción fija solo desde su emisión",()=>{
   const {chart}=chartFixture(true,true)
